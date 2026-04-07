@@ -26,6 +26,14 @@ firebase emulators:start
 # run security rules tests (starts firestore+storage+auth emulators automatically)
 npm run test:rules
 
+# run migration CLI smoke tests
+npm run test:migration
+
+# data migration (DIGS-5)
+npm run migrate:data -- --mode=full --dry-run
+npm run migrate:data -- --mode=full
+npm run migrate:data -- --mode=delta --since 2026-04-07T12:00:00Z
+
 # deploy config-only assets
 firebase deploy --only firestore:rules,firestore:indexes,storage
 
@@ -62,3 +70,4 @@ Follow in this exact order:
 
 - Public routes must remain public; only admin area is authenticated/allowlisted.
 - The function email workflow is intentionally non-blocking: booking success does not depend on email delivery.
+- Migration runbook: `docs/migration-runbook.md`

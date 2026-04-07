@@ -2,8 +2,14 @@
   "name": "sudsandshine-firebase",
   "private": true,
   "scripts": {
+    "migrate:data": "node scripts/migrate-supabase-to-firebase.mjs",
+    "test:migration": "node --test tests/migration/*.test.mjs",
     "test:rules": "firebase emulators:exec --only auth,firestore,storage \"node --test --test-concurrency=1 tests/rules/*.test.mjs\"",
     "test:rules:local": "node --test --test-concurrency=1 tests/rules/*.test.mjs"
+  },
+  "dependencies": {
+    "@supabase/supabase-js": "^2.50.0",
+    "firebase-admin": "^13.6.0"
   },
   "devDependencies": {
     "@firebase/rules-unit-testing": "^4.0.1",
