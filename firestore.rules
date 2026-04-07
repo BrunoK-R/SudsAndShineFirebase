@@ -1,0 +1,64 @@
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+    function isSignedIn() {
+      return request.auth != null;
+    }
+
+    function hasRole(role) {
+      return isSignedIn() && request.auth.token.role == role;
+    }
+
+    function isStaff() {
+      return hasRole('admin') || hasRole('employee');
+    }
+
+    match /admin_allowlist/{docId} {
+      allow read, write: if hasRole('admin');
+    }
+
+    match /services/{docId} {
+      allow read: if true;
+      allow write: if hasRole('admin');
+    }
+
+    match /portfolio_items/{docId} {
+      allow read: if true;
+      allow write: if isStaff();
+    }
+
+    match /business_settings/{docId} {
+      allow read: if true;
+      allow write: if hasRole('admin');
+    }
+
+    match /reservations/{docId} {
+      allow create: if true;
+      allow read, update, delete: if isStaff();
+    }
+
+    match /blocked_slots/{docId} {
+      allow read: if isStaff();
+      allow write: if hasRole('admin');
+    }
+
+    match /workers/{docId} {
+      allow read: if isStaff();
+      allow write: if hasRole('admin');
+    }
+
+    match /worker_presence/{docId} {
+      allow read: if isStaff();
+      allow write: if hasRole('admin');
+    }
+
+    match /capacity_overrides/{docId} {
+      allow read: if isStaff();
+      allow write: if hasRole('admin');
+    }
+
+    match /{document=**} {
+      allow read, write: if false;
+    }
+  }
+}
