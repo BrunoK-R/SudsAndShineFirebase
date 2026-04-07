@@ -2,6 +2,7 @@
   "name": "functions",
   "description": "Cloud Functions for Firebase",
   "scripts": {
+    "test": "node --test test/**/*.test.js",
     "emulate": "firebase emulators:start --only functions,firestore,auth,storage,hosting",
     "serve": "firebase emulators:start --only functions",
     "deploy": "firebase deploy --only functions",

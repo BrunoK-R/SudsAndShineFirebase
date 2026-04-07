@@ -1,6 +1,14 @@
 const admin = require("firebase-admin");
 const {setGlobalOptions, logger} = require("firebase-functions/v2");
 const {onCall, onRequest, HttpsError} = require("firebase-functions/v2/https");
+const {
+  ACTIVE_RESERVATION_STATUS_VALUES,
+  countOverlappingReservations,
+  generateDeterministicReservationCode,
+  hasBlockedSlotOverlap,
+  resolveCapacityLimit,
+  validateCreateReservationInput,
+} = require("./createReservation");
 
 admin.initializeApp();
 const db = admin.firestore();
@@ -14,25 +22,6 @@ function assertString(value, fieldName) {
   if (typeof value !== "string" || !value.trim()) {
     throw new HttpsError("invalid-argument", `${fieldName} is required`);
   }
-}
-
-function parseISODateTime(value, fieldName) {
-  assertString(value, fieldName);
-  const parsed = new Date(value);
-  if (Number.isNaN(parsed.getTime())) {
-    throw new HttpsError("invalid-argument", `${fieldName} must be a valid ISO date string`);
-  }
-  return parsed;
-}
-
-function generateReservationCode() {
-  const alphabet = "ABCDEFGHJKLMNPQRSTUVWXYZ23456789";
-  let code = "SS-";
-  for (let i = 0; i < 8; i += 1) {
-    const idx = Math.floor(Math.random() * alphabet.length);
-    code += alphabet[idx];
-  }
-  return code;
 }
 
 async function userRoleFromAuth(context) {
@@ -50,75 +39,72 @@ async function getAllowlistedRole(email) {
 }
 
 exports.createReservation = onCall(async (request) => {
-  const data = request.data || {};
+  const data = validateCreateReservationInput(request.data);
 
-  assertString(data.customerName, "customerName");
-  assertString(data.customerEmail, "customerEmail");
-  assertString(data.serviceId, "serviceId");
-  assertString(data.slotStart, "slotStart");
-  assertString(data.slotEnd, "slotEnd");
-
-  const slotStart = parseISODateTime(data.slotStart, "slotStart");
-  const slotEnd = parseISODateTime(data.slotEnd, "slotEnd");
-
-  if (slotEnd <= slotStart) {
-    throw new HttpsError("invalid-argument", "slotEnd must be after slotStart");
-  }
-
+  const slotStart = data.slotStart;
+  const slotEnd = data.slotEnd;
   const dateKey = slotStart.toISOString().slice(0, 10);
 
   const reservationRef = db.collection("reservations").doc();
-  const reservationCode = generateReservationCode();
+  const reservationCode = generateDeterministicReservationCode(reservationRef.id);
 
   await db.runTransaction(async (tx) => {
     const reservationsQuery = db
       .collection("reservations")
       .where("date", "==", dateKey)
-      .where("status", "in", ["pending", "confirmed"]);
+      .where("status", "in", ACTIVE_RESERVATION_STATUS_VALUES);
 
     const blockedQuery = db.collection("blocked_slots").where("date", "==", dateKey);
+    const capacityOverrideQuery = db
+      .collection("capacity_overrides")
+      .where("date", "==", dateKey)
+      .limit(1);
+    const defaultCapacityQuery = db
+      .collection("business_settings")
+      .where("key", "==", "default_max_bookings_per_slot")
+      .limit(1);
 
-    const [reservationsSnap, blockedSnap] = await Promise.all([
+    const [reservationsSnap, blockedSnap, capacityOverrideSnap, defaultCapacitySnap] = await Promise.all([
       tx.get(reservationsQuery),
       tx.get(blockedQuery),
+      tx.get(capacityOverrideQuery),
+      tx.get(defaultCapacityQuery),
     ]);
 
-    const overlaps = (existingStart, existingEnd) => {
-      return slotStart < existingEnd && slotEnd > existingStart;
-    };
+    const capacityOverride = capacityOverrideSnap.empty ? null : capacityOverrideSnap.docs[0].data();
+    const defaultCapacitySetting = defaultCapacitySnap.empty ? null : defaultCapacitySnap.docs[0].data();
+    const capacityLimit = resolveCapacityLimit(defaultCapacitySetting, capacityOverride);
 
-    for (const doc of reservationsSnap.docs) {
-      const item = doc.data();
-      if (!item.slotStart || !item.slotEnd) continue;
-      const existingStart = new Date(item.slotStart);
-      const existingEnd = new Date(item.slotEnd);
-      if (overlaps(existingStart, existingEnd)) {
-        throw new HttpsError("already-exists", "Selected time slot is unavailable");
-      }
+    if (capacityLimit <= 0) {
+      throw new HttpsError("already-exists", "Selected time slot is unavailable");
     }
 
-    for (const doc of blockedSnap.docs) {
-      const item = doc.data();
-      if (!item.slotStart || !item.slotEnd) continue;
-      const existingStart = new Date(item.slotStart);
-      const existingEnd = new Date(item.slotEnd);
-      if (overlaps(existingStart, existingEnd)) {
-        throw new HttpsError("already-exists", "Selected time slot is blocked");
-      }
+    const blockedSlots = blockedSnap.docs.map((docSnap) => docSnap.data());
+    if (hasBlockedSlotOverlap(blockedSlots, slotStart, slotEnd)) {
+      throw new HttpsError("already-exists", "Selected time slot is blocked");
+    }
+
+    const reservations = reservationsSnap.docs.map((docSnap) => docSnap.data());
+    const overlappingReservations = countOverlappingReservations(reservations, slotStart, slotEnd);
+    if (overlappingReservations >= capacityLimit) {
+      throw new HttpsError("already-exists", "Selected time slot is unavailable");
     }
 
     tx.set(reservationRef, {
       reservationCode,
-      customerName: data.customerName.trim(),
-      customerEmail: data.customerEmail.trim().toLowerCase(),
-      customerPhone: typeof data.customerPhone === "string" ? data.customerPhone.trim() : "",
+      customerName: data.customerName,
+      customerEmail: data.customerEmail,
+      customerPhone: data.customerPhone,
       serviceId: data.serviceId,
-      serviceName: typeof data.serviceName === "string" ? data.serviceName : "",
+      serviceName: data.serviceName,
       slotStart: slotStart.toISOString(),
       slotEnd: slotEnd.toISOString(),
       date: dateKey,
+      vehicleType: data.vehicleType,
+      gdprConsent: data.gdprConsent,
       status: "pending",
-      notes: typeof data.notes === "string" ? data.notes : "",
+      notes: data.notes,
+      internalNotes: "",
       createdAt: admin.firestore.FieldValue.serverTimestamp(),
       updatedAt: admin.firestore.FieldValue.serverTimestamp(),
       source: "public-booking",
