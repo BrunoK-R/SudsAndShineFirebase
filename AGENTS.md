@@ -9,3 +9,6 @@ After completing each ticket:
 4. Commit only after explicit user approval.
 5. Proceed to the next ticket only after the commit is done.
 
+## Migration Done Criteria (Required)
+
+For any migrated feature, testing is mandatory before marking the ticket as done.
