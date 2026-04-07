@@ -1,0 +1,3 @@
+# SudsAndShineFirebase
+
+Initial repository setup.
