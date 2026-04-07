@@ -9,17 +9,80 @@ service cloud.firestore {
       return isSignedIn() && request.auth.token.role == role;
     }
 
+    function isAdmin() {
+      return hasRole('admin');
+    }
+
+    function isEmployee() {
+      return hasRole('employee');
+    }
+
     function isStaff() {
-      return hasRole('admin') || hasRole('employee');
+      return isAdmin() || isEmployee();
+    }
+
+    function isShortString(value, minLen, maxLen) {
+      return value is string && value.size() >= minLen && value.size() <= maxLen;
+    }
+
+    function optionalStringField(key, maxLen) {
+      return !request.resource.data.keys().hasAny([key]) ||
+        (request.resource.data[key] is string && request.resource.data[key].size() <= maxLen);
+    }
+
+    function isValidPublicReservationCreate() {
+      return request.resource.data.keys().hasOnly([
+          'reservationCode',
+          'customerName',
+          'customerEmail',
+          'customerPhone',
+          'serviceId',
+          'serviceName',
+          'slotStart',
+          'slotEnd',
+          'date',
+          'status',
+          'notes',
+          'createdAt',
+          'updatedAt',
+          'source',
+        ]) &&
+        request.resource.data.keys().hasAll([
+          'reservationCode',
+          'customerName',
+          'customerEmail',
+          'serviceId',
+          'slotStart',
+          'slotEnd',
+          'date',
+          'status',
+          'createdAt',
+          'updatedAt',
+          'source',
+        ]) &&
+        isShortString(request.resource.data.reservationCode, 5, 24) &&
+        isShortString(request.resource.data.customerName, 2, 120) &&
+        isShortString(request.resource.data.customerEmail, 5, 320) &&
+        isShortString(request.resource.data.serviceId, 1, 120) &&
+        isShortString(request.resource.data.slotStart, 10, 64) &&
+        isShortString(request.resource.data.slotEnd, 10, 64) &&
+        isShortString(request.resource.data.date, 10, 10) &&
+        request.resource.data.status == 'pending' &&
+        request.resource.data.source == 'public-booking' &&
+        request.resource.data.createdAt is timestamp &&
+        request.resource.data.updatedAt is timestamp &&
+        optionalStringField('customerPhone', 40) &&
+        optionalStringField('serviceName', 200) &&
+        optionalStringField('notes', 2000);
     }
 
     match /admin_allowlist/{docId} {
-      allow read, write: if hasRole('admin');
+      allow read, write: if isAdmin();
     }
 
     match /services/{docId} {
       allow read: if true;
-      allow write: if hasRole('admin');
+      allow write: if isAdmin();
     }
 
     match /portfolio_items/{docId} {
@@ -29,32 +92,32 @@ service cloud.firestore {
 
     match /business_settings/{docId} {
       allow read: if true;
-      allow write: if hasRole('admin');
+      allow write: if isAdmin();
     }
 
     match /reservations/{docId} {
-      allow create: if true;
+      allow create: if isStaff() || isValidPublicReservationCreate();
       allow read, update, delete: if isStaff();
     }
 
     match /blocked_slots/{docId} {
       allow read: if isStaff();
-      allow write: if hasRole('admin');
+      allow write: if isAdmin();
     }
 
     match /workers/{docId} {
       allow read: if isStaff();
-      allow write: if hasRole('admin');
+      allow write: if isAdmin();
     }
 
     match /worker_presence/{docId} {
       allow read: if isStaff();
-      allow write: if hasRole('admin');
+      allow write: if isAdmin();
     }
 
     match /capacity_overrides/{docId} {
       allow read: if isStaff();
-      allow write: if hasRole('admin');
+      allow write: if isAdmin();
     }
 
     match /{document=**} {

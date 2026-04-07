@@ -4,3 +4,4 @@ ui-debug.log
 firestore-debug.log
 functions-debug.log
 storage-debug.log
+node_modules/

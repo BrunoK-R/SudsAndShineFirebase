@@ -1,6 +1,16 @@
 rules_version = '2';
 service firebase.storage {
   match /b/{bucket}/o {
+    function isImageUpload() {
+      return request.resource != null &&
+        request.resource.contentType.matches('image/.*');
+    }
+
+    function isAllowedUploadSize() {
+      return request.resource != null &&
+        request.resource.size <= 10 * 1024 * 1024;
+    }
+
     function isSignedIn() {
       return request.auth != null;
     }
@@ -9,13 +19,22 @@ service firebase.storage {
       return isSignedIn() && request.auth.token.role == role;
     }
 
-    function isStaff() {
-      return hasRole('admin') || hasRole('employee');
+    function isAdmin() {
+      return hasRole('admin');
     }
 
-    match /portfolio/{allPaths=**} {
+    function isEmployee() {
+      return hasRole('employee');
+    }
+
+    function isStaff() {
+      return isAdmin() || isEmployee();
+    }
+
+    match /portfolio/{itemId}/{fileName} {
       allow read: if true;
-      allow write: if isStaff();
+      allow create, update: if isStaff() && isImageUpload() && isAllowedUploadSize();
+      allow delete: if isStaff();
     }
 
     match /{allPaths=**} {

@@ -19,8 +19,12 @@ This repository contains the Firebase-first infrastructure and Cloud Functions b
 
 ```bash
 # from repo root
+npm install
 npm --prefix functions install
 firebase emulators:start
+
+# run security rules tests (starts firestore+storage+auth emulators automatically)
+npm run test:rules
 
 # deploy config-only assets
 firebase deploy --only firestore:rules,firestore:indexes,storage
