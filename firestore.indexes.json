@@ -37,11 +37,11 @@
       "queryScope": "COLLECTION",
       "fields": [
         {
-          "fieldPath": "isPublished",
+          "fieldPath": "isVisible",
           "order": "ASCENDING"
         },
         {
-          "fieldPath": "sortOrder",
+          "fieldPath": "displayOrder",
           "order": "ASCENDING"
         }
       ]
