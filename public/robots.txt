@@ -12,3 +12,5 @@ Allow: /
 
 User-agent: *
 Allow: /
+
+Sitemap: https://sudsandshine-bd3e2.web.app/sitemap.xml
