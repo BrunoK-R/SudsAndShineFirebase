@@ -11,6 +11,10 @@ const {
   resolveAvailabilityRequest,
   validateCreateReservationInput,
 } = require("./createReservation");
+const {
+  assertCatalogReadable,
+  buildServiceCatalog,
+} = require("./serviceCatalog");
 
 admin.initializeApp();
 const db = admin.firestore();
@@ -168,6 +172,13 @@ exports.getAvailability = onCall(async (request) => {
     capacityOverrides: capacityOverrideSnap.docs.map((docSnap) => docSnap.data()),
     defaultCapacitySetting: defaultCapacitySnap.empty ? null : defaultCapacitySnap.docs[0].data(),
   });
+});
+
+exports.getServiceCatalog = onCall(async () => {
+  const servicesSnap = await db.collection("services").get();
+  const catalog = buildServiceCatalog(servicesSnap.docs);
+  assertCatalogReadable(catalog);
+  return catalog;
 });
 
 exports.assignAdminRole = onCall(async (request) => {

@@ -10,6 +10,7 @@ This repository contains the Firebase-first infrastructure and Cloud Functions b
 - Baseline Storage rules in `storage.rules`
 - Initial composite indexes in `firestore.indexes.json`
 - Function stubs in `functions/index.js`:
+  - `getServiceCatalog` callable for public service pricing/duration catalog from Firestore `services`
   - `createReservation` callable with transactional conflict checks
   - `getAvailability` callable for public month availability derived from capacity, reservations, and blocked slots
   - `assignAdminRole` callable for allowlist/claim assignment
