@@ -38,6 +38,10 @@ const {
   assertReservationCancelable,
   assertReservationId,
 } = require("./reservationCancellation");
+const {
+  buildLoyaltyRewardCode,
+  buildUserLoyalty,
+} = require("./loyalty");
 
 admin.initializeApp();
 const db = admin.firestore();
@@ -79,12 +83,38 @@ function userVehiclesCollection(uid) {
   return db.collection("users").doc(uid).collection("vehicles");
 }
 
+function userLoyaltyRedemptionsCollection(uid) {
+  return db.collection("users").doc(uid).collection("loyalty_redemptions");
+}
+
 function userDocument(uid) {
   return db.collection("users").doc(uid);
 }
 
 function reservationVehicleTypeForComparison(vehicleType) {
   return vehicleType === "passageiros" ? "passenger" : vehicleType;
+}
+
+function userReservationQueries(uid, email) {
+  const queries = [
+    db.collection("reservations").where("customerUid", "==", uid).limit(50),
+  ];
+
+  if (email) {
+    queries.push(db.collection("reservations").where("customerEmail", "==", email).limit(50));
+  }
+
+  return queries;
+}
+
+function uniqueReservationDocsFromSnaps(reservationSnaps) {
+  const reservationsById = new Map();
+  for (const snap of reservationSnaps) {
+    for (const docSnap of snap.docs) {
+      reservationsById.set(docSnap.id, docSnap);
+    }
+  }
+  return Array.from(reservationsById.values());
 }
 
 exports.createReservation = onCall(async (request) => {
@@ -266,38 +296,119 @@ exports.getMyReservations = onCall(async (request) => {
 
   const uid = request.auth.uid;
   const email = String(request.auth.token.email || "").trim().toLowerCase();
-  const reservationQueries = [
-    db.collection("reservations").where("customerUid", "==", uid).limit(50).get(),
-  ];
+  const reservationQueries = userReservationQueries(uid, email);
 
-  if (email) {
-    reservationQueries.push(
-      db.collection("reservations").where("customerEmail", "==", email).limit(50).get(),
-    );
-  }
-
-  const [servicesSnap, ...reservationSnaps] = await Promise.all([
+  const [servicesSnap, redemptionSnap, ...reservationSnaps] = await Promise.all([
     db.collection("services").get(),
-    ...reservationQueries,
+    userLoyaltyRedemptionsCollection(uid).limit(100).get(),
+    ...reservationQueries.map((query) => query.get()),
   ]);
-  const reservationsById = new Map();
+  const reservationDocs = uniqueReservationDocsFromSnaps(reservationSnaps);
 
-  for (const snap of reservationSnaps) {
-    for (const docSnap of snap.docs) {
-      reservationsById.set(docSnap.id, docSnap);
-    }
-  }
-
-  const reviewRefs = Array.from(reservationsById.keys()).map((reservationId) =>
-    db.collection("reservation_reviews").doc(buildReservationReviewId(reservationId, uid)),
+  const reviewRefs = reservationDocs.map((reservationDoc) =>
+    db.collection("reservation_reviews").doc(buildReservationReviewId(reservationDoc.id, uid)),
   );
   const reviewDocs = reviewRefs.length > 0 ? await db.getAll(...reviewRefs) : [];
+  const loyalty = buildUserLoyalty({
+    reservationDocs,
+    redemptionDocs: redemptionSnap.docs,
+  });
 
   return buildUserReservationHistory({
-    reservationDocs: Array.from(reservationsById.values()),
+    reservationDocs,
     serviceDocs: servicesSnap.docs,
     reviewDocs,
+    loyalty,
   });
+});
+
+exports.getMyLoyalty = onCall(async (request) => {
+  const uid = assertAuthenticatedUid(request);
+  const email = String(request.auth?.token?.email || "").trim().toLowerCase();
+
+  const [redemptionSnap, ...reservationSnaps] = await Promise.all([
+    userLoyaltyRedemptionsCollection(uid).limit(100).get(),
+    ...userReservationQueries(uid, email).map((query) => query.get()),
+  ]);
+
+  return buildUserLoyalty({
+    reservationDocs: uniqueReservationDocsFromSnaps(reservationSnaps),
+    redemptionDocs: redemptionSnap.docs,
+  });
+});
+
+exports.redeemMyLoyaltyReward = onCall(async (request) => {
+  const uid = assertAuthenticatedUid(request);
+  const email = String(request.auth?.token?.email || "").trim().toLowerCase();
+  let redemption = null;
+  let loyalty = null;
+
+  await db.runTransaction(async (tx) => {
+    const [redemptionSnap, ...reservationSnaps] = await Promise.all([
+      tx.get(userLoyaltyRedemptionsCollection(uid).limit(100)),
+      ...userReservationQueries(uid, email).map((query) => tx.get(query)),
+    ]);
+    const reservationDocs = uniqueReservationDocsFromSnaps(reservationSnaps);
+    const currentLoyalty = buildUserLoyalty({
+      reservationDocs,
+      redemptionDocs: redemptionSnap.docs,
+    });
+
+    if (!currentLoyalty.rewardReady) {
+      throw new HttpsError("failed-precondition", "No loyalty reward is available");
+    }
+
+    const rewardNumber = currentLoyalty.claimedRewards + 1;
+    const redemptionRef = userLoyaltyRedemptionsCollection(uid)
+      .doc(`reward-${String(rewardNumber).padStart(4, "0")}`);
+    const existingRedemptionSnap = await tx.get(redemptionRef);
+
+    if (existingRedemptionSnap.exists) {
+      throw new HttpsError("already-exists", "Loyalty reward has already been claimed");
+    }
+
+    const rewardCode = buildLoyaltyRewardCode(uid, rewardNumber);
+    const now = new Date();
+    const redemptionData = {
+      ownerUid: uid,
+      ownerEmail: email,
+      rewardNumber,
+      rewardCode,
+      status: "issued",
+      source: "mobile-app",
+      createdAt: admin.firestore.FieldValue.serverTimestamp(),
+      updatedAt: admin.firestore.FieldValue.serverTimestamp(),
+    };
+    const previewRedemptionDoc = {
+      id: redemptionRef.id,
+      exists: true,
+      data: () => ({
+        ...redemptionData,
+        createdAt: now.toISOString(),
+        updatedAt: now.toISOString(),
+      }),
+    };
+
+    tx.set(redemptionRef, redemptionData);
+
+    redemption = {
+      id: redemptionRef.id,
+      rewardCode,
+      rewardNumber,
+      status: "issued",
+    };
+    loyalty = buildUserLoyalty({
+      reservationDocs,
+      redemptionDocs: [...redemptionSnap.docs, previewRedemptionDoc],
+      now,
+    });
+  });
+
+  return {
+    ok: true,
+    redemption,
+    loyalty,
+  };
 });
 
 exports.submitReservationReview = onCall(async (request) => {

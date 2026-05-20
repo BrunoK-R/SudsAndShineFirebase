@@ -94,7 +94,7 @@ function normalizeReservationDocument(doc, servicesById, reviewsByReservationId,
   };
 }
 
-function buildUserReservationHistory({reservationDocs, serviceDocs, reviewDocs = [], now = new Date()}) {
+function buildUserReservationHistory({reservationDocs, serviceDocs, reviewDocs = [], loyalty = null, now = new Date()}) {
   const catalog = buildServiceCatalog(serviceDocs || []);
   const servicesById = new Map(catalog.services.map((service) => [service.id, service]));
   const reviewsByReservationId = new Map(
@@ -109,7 +109,11 @@ function buildUserReservationHistory({reservationDocs, serviceDocs, reviewDocs =
     .sort((left, right) => right.slotStart.localeCompare(left.slotStart))
     .slice(0, USER_RESERVATION_LIMIT);
 
-  return {reservations};
+  const result = {reservations};
+  if (loyalty) {
+    result.loyalty = loyalty;
+  }
+  return result;
 }
 
 module.exports = {
