@@ -24,6 +24,10 @@ const {
   normalizeVehicleDocument,
   validateVehiclePayload,
 } = require("./vehicleRegistry");
+const {
+  buildUserProfile,
+  validateUserProfilePayload,
+} = require("./userProfile");
 
 admin.initializeApp();
 const db = admin.firestore();
@@ -63,6 +67,10 @@ function assertAuthenticatedUid(request) {
 
 function userVehiclesCollection(uid) {
   return db.collection("users").doc(uid).collection("vehicles");
+}
+
+function userDocument(uid) {
+  return db.collection("users").doc(uid);
 }
 
 function reservationVehicleTypeForComparison(vehicleType) {
@@ -284,6 +292,52 @@ exports.getMyVehicles = onCall(async (request) => {
     .get();
 
   return buildUserVehicleList(vehiclesSnap.docs);
+});
+
+exports.getMyProfile = onCall(async (request) => {
+  const uid = assertAuthenticatedUid(request);
+  const userSnap = await userDocument(uid).get();
+
+  return buildUserProfile({
+    uid,
+    authToken: request.auth?.token || {},
+    userDoc: userSnap,
+  });
+});
+
+exports.updateMyProfile = onCall(async (request) => {
+  const uid = assertAuthenticatedUid(request);
+  const data = validateUserProfilePayload(request.data);
+  const userRef = userDocument(uid);
+  const userSnap = await userRef.get();
+  const now = admin.firestore.FieldValue.serverTimestamp();
+  const email = String(request.auth?.token?.email || "").trim().toLowerCase();
+
+  await userRef.set(
+    {
+      ...data,
+      uid,
+      email,
+      source: "mobile-app",
+      createdAt: userSnap.exists ? userSnap.get("createdAt") || now : now,
+      updatedAt: now,
+    },
+    {merge: true},
+  );
+
+  admin.auth().updateUser(uid, {displayName: data.displayName}).catch((err) => {
+    logger.warn("Firebase Auth displayName update failed", {
+      uid,
+      message: err?.message,
+    });
+  });
+
+  const updatedSnap = await userRef.get();
+  return buildUserProfile({
+    uid,
+    authToken: request.auth?.token || {},
+    userDoc: updatedSnap,
+  });
 });
 
 exports.createVehicle = onCall(async (request) => {
