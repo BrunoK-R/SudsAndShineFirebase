@@ -18,6 +18,12 @@ const {
 const {
   buildUserReservationHistory,
 } = require("./reservationHistory");
+const {
+  assertVehicleId,
+  buildUserVehicleList,
+  normalizeVehicleDocument,
+  validateVehiclePayload,
+} = require("./vehicleRegistry");
 
 admin.initializeApp();
 const db = admin.firestore();
@@ -45,6 +51,18 @@ async function getAllowlistedRole(email) {
   const role = snap.get("role");
   if (role === "admin" || role === "employee") return role;
   return null;
+}
+
+function assertAuthenticatedUid(request) {
+  const uid = request.auth?.uid;
+  if (!uid) {
+    throw new HttpsError("unauthenticated", "Authentication required");
+  }
+  return uid;
+}
+
+function userVehiclesCollection(uid) {
+  return db.collection("users").doc(uid).collection("vehicles");
 }
 
 exports.createReservation = onCall(async (request) => {
@@ -219,6 +237,80 @@ exports.getMyReservations = onCall(async (request) => {
     reservationDocs: Array.from(reservationsById.values()),
     serviceDocs: servicesSnap.docs,
   });
+});
+
+exports.getMyVehicles = onCall(async (request) => {
+  const uid = assertAuthenticatedUid(request);
+  const vehiclesSnap = await userVehiclesCollection(uid)
+    .orderBy("createdAt", "asc")
+    .limit(50)
+    .get();
+
+  return buildUserVehicleList(vehiclesSnap.docs);
+});
+
+exports.createVehicle = onCall(async (request) => {
+  const uid = assertAuthenticatedUid(request);
+  const data = validateVehiclePayload(request.data);
+  const vehicleRef = userVehiclesCollection(uid).doc();
+  const now = admin.firestore.FieldValue.serverTimestamp();
+
+  await vehicleRef.set({
+    ...data,
+    ownerUid: uid,
+    createdAt: now,
+    updatedAt: now,
+    source: "mobile-app",
+  });
+
+  return {
+    vehicle: {
+      id: vehicleRef.id,
+      ...data,
+    },
+  };
+});
+
+exports.updateVehicle = onCall(async (request) => {
+  const uid = assertAuthenticatedUid(request);
+  const vehicleId = assertVehicleId(request.data?.vehicleId || request.data?.id);
+  const data = validateVehiclePayload(request.data);
+  const vehicleRef = userVehiclesCollection(uid).doc(vehicleId);
+  const vehicleSnap = await vehicleRef.get();
+
+  if (!vehicleSnap.exists) {
+    throw new HttpsError("not-found", "Vehicle not found");
+  }
+
+  await vehicleRef.update({
+    ...data,
+    updatedAt: admin.firestore.FieldValue.serverTimestamp(),
+  });
+
+  return {
+    vehicle: {
+      id: vehicleId,
+      ...data,
+    },
+  };
+});
+
+exports.deleteVehicle = onCall(async (request) => {
+  const uid = assertAuthenticatedUid(request);
+  const vehicleId = assertVehicleId(request.data?.vehicleId || request.data?.id);
+  const vehicleRef = userVehiclesCollection(uid).doc(vehicleId);
+  const vehicleSnap = await vehicleRef.get();
+
+  if (!vehicleSnap.exists) {
+    throw new HttpsError("not-found", "Vehicle not found");
+  }
+
+  await vehicleRef.delete();
+
+  return {
+    ok: true,
+    vehicleId,
+  };
 });
 
 exports.assignAdminRole = onCall(async (request) => {
