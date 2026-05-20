@@ -31,7 +31,32 @@ function priceCentsForReservation(data, servicesById) {
   return data.vehicleType === "suv" ? service.suvPriceCents : service.passengerPriceCents;
 }
 
-function normalizeReservationDocument(doc, servicesById, now) {
+function normalizeReviewDocument(doc) {
+  if (!doc?.exists) return null;
+
+  const data = doc.data();
+  if (!data || typeof data !== "object") return null;
+
+  const reservationId = String(data.reservationId || "").trim();
+  if (!reservationId) return null;
+
+  const rating = Number(data.rating);
+  const reviewRating = Number.isInteger(rating) && rating >= 1 && rating <= 5 ? rating : null;
+  const reviewTags = Array.isArray(data.tags) ?
+    data.tags
+      .map((tag) => String(tag || "").trim())
+      .filter(Boolean)
+      .slice(0, 8) :
+    [];
+
+  return {
+    reservationId,
+    reviewRating,
+    reviewTags,
+  };
+}
+
+function normalizeReservationDocument(doc, servicesById, reviewsByReservationId, now) {
   const data = doc.data();
   if (!data || typeof data !== "object") return null;
 
@@ -49,6 +74,7 @@ function normalizeReservationDocument(doc, servicesById, now) {
     "Serviço";
   const status = normalizeStatus(data.status);
   const completed = isCompletedReservation(status, slotEnd, now);
+  const review = reviewsByReservationId.get(doc.id) || null;
 
   return {
     id: doc.id,
@@ -62,14 +88,23 @@ function normalizeReservationDocument(doc, servicesById, now) {
     vehicleLabel: String(data.vehicleLabel || "").trim(),
     priceCents: priceCentsForReservation(data, servicesById),
     upcoming: !completed,
+    reviewed: review !== null,
+    reviewRating: review?.reviewRating || null,
+    reviewTags: review?.reviewTags || [],
   };
 }
 
-function buildUserReservationHistory({reservationDocs, serviceDocs, now = new Date()}) {
+function buildUserReservationHistory({reservationDocs, serviceDocs, reviewDocs = [], now = new Date()}) {
   const catalog = buildServiceCatalog(serviceDocs || []);
   const servicesById = new Map(catalog.services.map((service) => [service.id, service]));
+  const reviewsByReservationId = new Map(
+    (reviewDocs || [])
+      .map((doc) => normalizeReviewDocument(doc))
+      .filter(Boolean)
+      .map((review) => [review.reservationId, review]),
+  );
   const reservations = (reservationDocs || [])
-    .map((doc) => normalizeReservationDocument(doc, servicesById, now))
+    .map((doc) => normalizeReservationDocument(doc, servicesById, reviewsByReservationId, now))
     .filter(Boolean)
     .sort((left, right) => right.slotStart.localeCompare(left.slotStart))
     .slice(0, USER_RESERVATION_LIMIT);
@@ -80,4 +115,5 @@ function buildUserReservationHistory({reservationDocs, serviceDocs, now = new Da
 module.exports = {
   buildUserReservationHistory,
   normalizeReservationDocument,
+  normalizeReviewDocument,
 };

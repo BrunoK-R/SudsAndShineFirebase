@@ -284,9 +284,15 @@ exports.getMyReservations = onCall(async (request) => {
     }
   }
 
+  const reviewRefs = Array.from(reservationsById.keys()).map((reservationId) =>
+    db.collection("reservation_reviews").doc(buildReservationReviewId(reservationId, uid)),
+  );
+  const reviewDocs = reviewRefs.length > 0 ? await db.getAll(...reviewRefs) : [];
+
   return buildUserReservationHistory({
     reservationDocs: Array.from(reservationsById.values()),
     serviceDocs: servicesSnap.docs,
+    reviewDocs,
   });
 });
 

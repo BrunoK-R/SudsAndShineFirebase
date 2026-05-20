@@ -1,79 +1,64 @@
-const test = require("node:test");
 const assert = require("node:assert/strict");
+const test = require("node:test");
 const {
   buildUserReservationHistory,
-  normalizeReservationDocument,
 } = require("../reservationHistory");
 
-function doc(id, data) {
+function doc(id, data, exists = true) {
   return {
     id,
+    exists,
     data: () => data,
   };
 }
 
-test("normalizes reservations with catalog price and upcoming bucket", () => {
-  const item = normalizeReservationDocument(
-    doc("reservation-1", {
-      reservationCode: "SS-ABCDEFGH",
-      serviceId: "premium",
-      serviceName: "Lavagem Premium",
-      slotStart: "2026-05-20T10:00:00.000Z",
-      slotEnd: "2026-05-20T10:45:00.000Z",
-      status: "pending",
-      vehicleType: "suv",
-      vehicleLabel: "BMW 320d",
-    }),
-    new Map([
-      [
-        "premium",
-        {
-          id: "premium",
-          name: "Lavagem Premium",
-          passengerPriceCents: 3200,
-          suvPriceCents: 3400,
-        },
-      ],
-    ]),
-    new Date("2026-05-19T10:00:00.000Z"),
-  );
-
-  assert.equal(item.id, "reservation-1");
-  assert.equal(item.reservationCode, "SS-ABCDEFGH");
-  assert.equal(item.vehicleLabel, "BMW 320d");
-  assert.equal(item.priceCents, 3400);
-  assert.equal(item.upcoming, true);
-});
-
-test("buildUserReservationHistory merges defaults, sorts newest first, and marks past items completed", () => {
+test("buildUserReservationHistory includes review metadata for reviewed reservations", () => {
   const history = buildUserReservationHistory({
-    reservationDocs: [
-      doc("old", {
-        reservationCode: "SS-OLD",
-        serviceId: "standard",
-        slotStart: "2026-05-18T10:00:00.000Z",
-        slotEnd: "2026-05-18T10:30:00.000Z",
-        status: "pending",
-        vehicleType: "passageiros",
+    now: new Date("2026-05-20T12:00:00.000Z"),
+    serviceDocs: [
+      doc("premium", {
+        name: "Lavagem Premium",
+        durationMinutes: 45,
+        passengerPriceCents: 3200,
+        suvPriceCents: 3400,
       }),
-      doc("new", {
-        reservationCode: "SS-NEW",
+    ],
+    reservationDocs: [
+      doc("reservation-1", {
+        reservationCode: "SS-ABCDEFGH",
+        serviceId: "premium",
+        slotStart: "2026-05-18T10:00:00.000Z",
+        slotEnd: "2026-05-18T10:45:00.000Z",
+        status: "completed",
+        vehicleType: "suv",
+      }),
+      doc("reservation-2", {
+        reservationCode: "SS-HGFEDCBA",
         serviceId: "premium",
         slotStart: "2026-05-21T10:00:00.000Z",
         slotEnd: "2026-05-21T10:45:00.000Z",
-        status: "confirmed",
+        status: "pending",
         vehicleType: "passageiros",
       }),
     ],
-    serviceDocs: [],
-    now: new Date("2026-05-20T09:00:00.000Z"),
+    reviewDocs: [
+      doc("reservation-1_uid-1", {
+        reservationId: "reservation-1",
+        rating: 5,
+        tags: ["Qualidade", "Rápido"],
+      }),
+    ],
   });
 
-  assert.deepEqual(
-    history.reservations.map((reservation) => reservation.id),
-    ["new", "old"],
-  );
-  assert.equal(history.reservations[0].priceCents, 3200);
-  assert.equal(history.reservations[0].upcoming, true);
-  assert.equal(history.reservations[1].upcoming, false);
+  assert.equal(history.reservations.length, 2);
+
+  const reviewed = history.reservations.find((reservation) => reservation.id === "reservation-1");
+  assert.equal(reviewed.reviewed, true);
+  assert.equal(reviewed.reviewRating, 5);
+  assert.deepEqual(reviewed.reviewTags, ["Qualidade", "Rápido"]);
+
+  const unreviewed = history.reservations.find((reservation) => reservation.id === "reservation-2");
+  assert.equal(unreviewed.reviewed, false);
+  assert.equal(unreviewed.reviewRating, null);
+  assert.deepEqual(unreviewed.reviewTags, []);
 });
