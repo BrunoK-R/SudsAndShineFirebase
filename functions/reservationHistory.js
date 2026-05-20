@@ -26,6 +26,11 @@ function isCompletedReservation(status, slotEnd, now) {
 }
 
 function priceCentsForReservation(data, servicesById) {
+  const storedPriceCents = Number(data.priceCents);
+  if (Number.isFinite(storedPriceCents)) {
+    return Math.max(0, Math.round(storedPriceCents));
+  }
+
   const service = servicesById.get(String(data.serviceId || "").trim());
   if (!service) return null;
   return data.vehicleType === "suv" ? service.suvPriceCents : service.passengerPriceCents;

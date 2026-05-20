@@ -1,4 +1,5 @@
 const {HttpsError} = require("firebase-functions/v2/https");
+const {normalizeRewardCodeInput} = require("./loyalty");
 
 const RESERVATION_CODE_ALPHABET = "ABCDEFGHJKLMNPQRSTUVWXYZ23456789";
 const ACTIVE_RESERVATION_STATUS_VALUES = [
@@ -381,6 +382,10 @@ function validateCreateReservationInput(rawData) {
   if (userVehicleId.includes("/")) {
     throw new HttpsError("invalid-argument", "userVehicleId is invalid");
   }
+  const loyaltyRewardCode = normalizeRewardCodeInput(data.loyaltyRewardCode || data.rewardCode);
+  if (loyaltyRewardCode.includes("/")) {
+    throw new HttpsError("invalid-argument", "loyaltyRewardCode is invalid");
+  }
 
   return {
     customerName: data.customerName.trim(),
@@ -395,6 +400,7 @@ function validateCreateReservationInput(rawData) {
     notes: typeof data.notes === "string" ? data.notes.trim() : "",
     userVehicleId,
     vehicleLabel: normalizeOptionalShortText(data.vehicleLabel, 160),
+    loyaltyRewardCode,
   };
 }
 

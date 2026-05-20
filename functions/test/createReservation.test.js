@@ -36,6 +36,7 @@ test("validateCreateReservationInput sanitizes and validates data", () => {
     notes: "  limpar interior  ",
     userVehicleId: " vehicle-1 ",
     vehicleLabel: " BMW 320d  ",
+    loyaltyRewardCode: " ss-free-uid1-0001 ",
   });
 
   assert.equal(parsed.customerName, "Bruno");
@@ -48,6 +49,7 @@ test("validateCreateReservationInput sanitizes and validates data", () => {
   assert.equal(parsed.notes, "limpar interior");
   assert.equal(parsed.userVehicleId, "vehicle-1");
   assert.equal(parsed.vehicleLabel, "BMW 320d");
+  assert.equal(parsed.loyaltyRewardCode, "SS-FREE-UID1-0001");
 });
 
 test("validateCreateReservationInput rejects invalid slot ranges", () => {

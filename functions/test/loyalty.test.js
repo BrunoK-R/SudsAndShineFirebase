@@ -1,9 +1,11 @@
 const assert = require("node:assert/strict");
 const test = require("node:test");
 const {
+  assertRedeemableLoyaltyRedemption,
   buildLoyaltyRewardCode,
   buildUserLoyalty,
   isCompletedLoyaltyWash,
+  normalizeRewardCodeInput,
 } = require("../loyalty");
 
 function doc(id, data, exists = true) {
@@ -106,4 +108,53 @@ test("buildUserLoyalty ignores cancelled reservations and counts past completed 
 
 test("buildLoyaltyRewardCode is deterministic for a user reward number", () => {
   assert.equal(buildLoyaltyRewardCode("uid-1234", 2), "SS-FREE-1234-0002");
+});
+
+test("normalizeRewardCodeInput removes spaces and uppercases codes", () => {
+  assert.equal(normalizeRewardCodeInput(" ss-free-uid1-0001 "), "SS-FREE-UID1-0001");
+  assert.equal(normalizeRewardCodeInput("SS FREE UID1 0001"), "SSFREEUID10001");
+});
+
+test("assertRedeemableLoyaltyRedemption accepts issued user rewards", () => {
+  const redemption = assertRedeemableLoyaltyRedemption(
+    doc("reward-0001", {
+      ownerUid: "uid-1",
+      rewardCode: "ss-free-uid1-0001",
+      rewardNumber: 1,
+      status: "issued",
+    }),
+    "uid-1",
+  );
+
+  assert.equal(redemption.id, "reward-0001");
+  assert.equal(redemption.rewardCode, "SS-FREE-UID1-0001");
+  assert.equal(redemption.rewardNumber, 1);
+});
+
+test("assertRedeemableLoyaltyRedemption rejects used rewards", () => {
+  assert.throws(() => {
+    assertRedeemableLoyaltyRedemption(
+      doc("reward-0001", {
+        ownerUid: "uid-1",
+        rewardCode: "SS-FREE-UID1-0001",
+        rewardNumber: 1,
+        status: "redeemed",
+      }),
+      "uid-1",
+    );
+  }, /already been used/);
+});
+
+test("assertRedeemableLoyaltyRedemption rejects rewards for another user", () => {
+  assert.throws(() => {
+    assertRedeemableLoyaltyRedemption(
+      doc("reward-0001", {
+        ownerUid: "uid-2",
+        rewardCode: "SS-FREE-UID1-0001",
+        rewardNumber: 1,
+        status: "issued",
+      }),
+      "uid-1",
+    );
+  }, /another user/);
 });

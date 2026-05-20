@@ -62,3 +62,32 @@ test("buildUserReservationHistory includes review metadata for reviewed reservat
   assert.equal(unreviewed.reviewRating, null);
   assert.deepEqual(unreviewed.reviewTags, []);
 });
+
+test("buildUserReservationHistory prefers stored rewarded reservation price", () => {
+  const history = buildUserReservationHistory({
+    now: new Date("2026-05-20T12:00:00.000Z"),
+    serviceDocs: [
+      doc("premium", {
+        name: "Lavagem Premium",
+        durationMinutes: 45,
+        passengerPriceCents: 3200,
+        suvPriceCents: 3400,
+      }),
+    ],
+    reservationDocs: [
+      doc("reservation-1", {
+        reservationCode: "SS-ABCDEFGH",
+        serviceId: "premium",
+        slotStart: "2026-05-21T10:00:00.000Z",
+        slotEnd: "2026-05-21T10:45:00.000Z",
+        status: "pending",
+        vehicleType: "suv",
+        loyaltyRewardApplied: true,
+        priceCents: 0,
+        discountCents: 3400,
+      }),
+    ],
+  });
+
+  assert.equal(history.reservations[0].priceCents, 0);
+});

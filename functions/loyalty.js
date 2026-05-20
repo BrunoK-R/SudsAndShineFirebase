@@ -1,3 +1,5 @@
+const {HttpsError} = require("firebase-functions/v2/https");
+
 const DEFAULT_REWARD_INTERVAL = 10;
 const USER_REDEMPTION_LIMIT = 100;
 
@@ -19,6 +21,10 @@ const ACTIVE_REDEMPTION_STATUS_VALUES = [
   "issued",
   "redeemed",
   "reserved",
+];
+
+const REDEEMABLE_REDEMPTION_STATUS_VALUES = [
+  "issued",
 ];
 
 function normalizeStatus(value, fallback = "pending") {
@@ -100,6 +106,50 @@ function buildLoyaltyRewardCode(uid, rewardNumber) {
   return `SS-FREE-${suffix}-${sequence}`;
 }
 
+function normalizeRewardCodeInput(value) {
+  if (value === undefined || value === null) return "";
+  return String(value)
+    .trim()
+    .replace(/\s+/g, "")
+    .toUpperCase()
+    .slice(0, 80);
+}
+
+function assertRedeemableLoyaltyRedemption(redemptionSnap, uid) {
+  if (!redemptionSnap?.exists) {
+    throw new HttpsError("failed-precondition", "Loyalty reward is not available");
+  }
+
+  const data = redemptionSnap.data();
+  if (!data || typeof data !== "object") {
+    throw new HttpsError("failed-precondition", "Loyalty reward is not available");
+  }
+
+  const ownerUid = String(data.ownerUid || "").trim();
+  if (ownerUid && ownerUid !== uid) {
+    throw new HttpsError("permission-denied", "Loyalty reward belongs to another user");
+  }
+
+  const status = normalizeStatus(data.status, "issued");
+  if (!REDEEMABLE_REDEMPTION_STATUS_VALUES.includes(status)) {
+    throw new HttpsError("failed-precondition", "Loyalty reward has already been used");
+  }
+
+  const rewardCode = normalizeRewardCodeInput(data.rewardCode);
+  if (!rewardCode) {
+    throw new HttpsError("failed-precondition", "Loyalty reward code is missing");
+  }
+
+  const rewardNumber = Number(data.rewardNumber);
+  return {
+    id: redemptionSnap.id,
+    ref: redemptionSnap.ref,
+    rewardCode,
+    rewardNumber: Number.isInteger(rewardNumber) && rewardNumber > 0 ? rewardNumber : null,
+    status,
+  };
+}
+
 function buildUserLoyalty({
   reservationDocs,
   redemptionDocs = [],
@@ -146,9 +196,12 @@ function buildUserLoyalty({
 module.exports = {
   ACTIVE_REDEMPTION_STATUS_VALUES,
   DEFAULT_REWARD_INTERVAL,
+  REDEEMABLE_REDEMPTION_STATUS_VALUES,
+  assertRedeemableLoyaltyRedemption,
   buildLoyaltyRewardCode,
   buildUserLoyalty,
   isCompletedLoyaltyWash,
+  normalizeRewardCodeInput,
   normalizeLoyaltyReservationDocument,
   normalizeRedemptionDocument,
 };

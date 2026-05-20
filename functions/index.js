@@ -39,6 +39,7 @@ const {
   assertReservationId,
 } = require("./reservationCancellation");
 const {
+  assertRedeemableLoyaltyRedemption,
   buildLoyaltyRewardCode,
   buildUserLoyalty,
 } = require("./loyalty");
@@ -117,6 +118,14 @@ function uniqueReservationDocsFromSnaps(reservationSnaps) {
   return Array.from(reservationsById.values());
 }
 
+function priceCentsForService(service, vehicleType) {
+  if (!service) return null;
+  const rawValue = vehicleType === "suv" ? service.suvPriceCents : service.passengerPriceCents;
+  const parsed = Number(rawValue);
+  if (!Number.isFinite(parsed)) return null;
+  return Math.max(0, Math.round(parsed));
+}
+
 exports.createReservation = onCall(async (request) => {
   const data = validateCreateReservationInput(request.data);
   const authenticatedUid = request.auth?.uid || null;
@@ -131,6 +140,13 @@ exports.createReservation = onCall(async (request) => {
   if (data.userVehicleId && !authenticatedUid) {
     throw new HttpsError("unauthenticated", "Authentication required for saved vehicle reservations");
   }
+  if (data.loyaltyRewardCode && !authenticatedUid) {
+    throw new HttpsError("unauthenticated", "Authentication required for loyalty rewards");
+  }
+
+  let appliedLoyaltyReward = null;
+  let reservationPriceCents = null;
+  let reservationDiscountCents = 0;
 
   await db.runTransaction(async (tx) => {
     const reservationsQuery = db
@@ -147,8 +163,14 @@ exports.createReservation = onCall(async (request) => {
       .collection("business_settings")
       .where("key", "==", "default_max_bookings_per_slot")
       .limit(1);
+    const servicesQuery = db.collection("services");
     const userVehicleRef = data.userVehicleId ?
       userVehiclesCollection(authenticatedUid).doc(data.userVehicleId) :
+      null;
+    const loyaltyRewardQuery = data.loyaltyRewardCode ?
+      userLoyaltyRedemptionsCollection(authenticatedUid)
+        .where("rewardCode", "==", data.loyaltyRewardCode)
+        .limit(1) :
       null;
 
     const [
@@ -156,19 +178,29 @@ exports.createReservation = onCall(async (request) => {
       blockedSnap,
       capacityOverrideSnap,
       defaultCapacitySnap,
+      servicesSnap,
       userVehicleSnap,
+      loyaltyRewardSnap,
     ] = await Promise.all([
       tx.get(reservationsQuery),
       tx.get(blockedQuery),
       tx.get(capacityOverrideQuery),
       tx.get(defaultCapacityQuery),
+      tx.get(servicesQuery),
       userVehicleRef ? tx.get(userVehicleRef) : Promise.resolve(null),
+      loyaltyRewardQuery ? tx.get(loyaltyRewardQuery) : Promise.resolve(null),
     ]);
 
     const capacityOverride = capacityOverrideSnap.empty ? null : capacityOverrideSnap.docs[0].data();
     const defaultCapacitySetting = defaultCapacitySnap.empty ? null : defaultCapacitySnap.docs[0].data();
     const capacityLimit = resolveCapacityLimit(defaultCapacitySetting, capacityOverride);
+    const serviceCatalog = buildServiceCatalog(servicesSnap.docs);
+    const service = serviceCatalog.services.find((item) => item.id === data.serviceId) || null;
+    const basePriceCents = priceCentsForService(service, data.vehicleType);
+    let priceCents = basePriceCents;
+    let discountCents = 0;
     let linkedVehicle = null;
+    let loyaltyReward = null;
 
     if (data.userVehicleId) {
       if (!userVehicleSnap?.exists) {
@@ -199,6 +231,12 @@ exports.createReservation = onCall(async (request) => {
       throw new HttpsError("already-exists", "Selected time slot is unavailable");
     }
 
+    if (data.loyaltyRewardCode) {
+      loyaltyReward = assertRedeemableLoyaltyRedemption(loyaltyRewardSnap?.docs?.[0], authenticatedUid);
+      discountCents = basePriceCents === null ? 0 : basePriceCents;
+      priceCents = 0;
+    }
+
     tx.set(reservationRef, {
       reservationCode,
       customerName: data.customerName,
@@ -216,6 +254,13 @@ exports.createReservation = onCall(async (request) => {
       vehiclePlate: linkedVehicle?.plate || "",
       vehicleColor: linkedVehicle?.color || "",
       gdprConsent: data.gdprConsent,
+      originalPriceCents: basePriceCents,
+      discountCents,
+      priceCents,
+      paymentStatus: loyaltyReward ? "covered_by_loyalty" : "pending",
+      loyaltyRewardApplied: Boolean(loyaltyReward),
+      loyaltyRewardCode: loyaltyReward?.rewardCode || "",
+      loyaltyRedemptionId: loyaltyReward?.id || null,
       status: "pending",
       notes: data.notes,
       internalNotes: "",
@@ -223,6 +268,23 @@ exports.createReservation = onCall(async (request) => {
       updatedAt: admin.firestore.FieldValue.serverTimestamp(),
       source: "public-booking",
     });
+
+    if (loyaltyReward) {
+      tx.update(loyaltyReward.ref, {
+        status: "redeemed",
+        redeemedAt: admin.firestore.FieldValue.serverTimestamp(),
+        reservationId: reservationRef.id,
+        reservationCode,
+        updatedAt: admin.firestore.FieldValue.serverTimestamp(),
+      });
+    }
+
+    appliedLoyaltyReward = loyaltyReward ? {
+      id: loyaltyReward.id,
+      rewardCode: loyaltyReward.rewardCode,
+    } : null;
+    reservationPriceCents = priceCents;
+    reservationDiscountCents = discountCents;
   });
 
   // Fire-and-forget email workflow. Booking success should not depend on email.
@@ -243,6 +305,10 @@ exports.createReservation = onCall(async (request) => {
     ok: true,
     reservationId: reservationRef.id,
     reservationCode,
+    loyaltyRewardApplied: Boolean(appliedLoyaltyReward),
+    loyaltyRewardCode: appliedLoyaltyReward?.rewardCode || null,
+    priceCents: reservationPriceCents,
+    discountCents: reservationDiscountCents,
   };
 });
 
