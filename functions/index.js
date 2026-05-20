@@ -34,6 +34,10 @@ const {
   buildReservationReviewId,
   validateReservationReviewInput,
 } = require("./reservationReviews");
+const {
+  assertReservationCancelable,
+  assertReservationId,
+} = require("./reservationCancellation");
 
 admin.initializeApp();
 const db = admin.firestore();
@@ -334,6 +338,42 @@ exports.submitReservationReview = onCall(async (request) => {
     ok: true,
     reviewId,
     reservationId: review.reservationId,
+  };
+});
+
+exports.cancelMyReservation = onCall(async (request) => {
+  const uid = assertAuthenticatedUid(request);
+  const email = String(request.auth?.token?.email || "").trim().toLowerCase();
+  const reservationId = assertReservationId(request.data?.reservationId || request.data?.id);
+  const reservationRef = db.collection("reservations").doc(reservationId);
+  let finalStatus = "cancelled";
+
+  await db.runTransaction(async (tx) => {
+    const reservationSnap = await tx.get(reservationRef);
+    const result = assertReservationCancelable({
+      reservationSnap,
+      uid,
+      email,
+    });
+
+    finalStatus = result.status;
+    if (result.alreadyCancelled) {
+      return;
+    }
+
+    tx.update(reservationRef, {
+      status: "cancelled",
+      cancelledAt: admin.firestore.FieldValue.serverTimestamp(),
+      cancelledByUid: uid,
+      updatedAt: admin.firestore.FieldValue.serverTimestamp(),
+    });
+    finalStatus = "cancelled";
+  });
+
+  return {
+    ok: true,
+    reservationId,
+    status: finalStatus,
   };
 });
 
