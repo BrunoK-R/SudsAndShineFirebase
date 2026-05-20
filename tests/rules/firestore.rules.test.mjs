@@ -138,3 +138,25 @@ test('only staff can read reservations and blocked slots', async () => {
   await assertFails(getDoc(doc(unauthDb(), 'reservations', 'r-1')));
   await assertFails(getDoc(doc(unauthDb(), 'blocked_slots', 'b-1')));
 });
+
+test('only staff can read and write reservation reviews directly', async () => {
+  await seedDoc('reservation_reviews', 'review-1', {
+    reservationId: 'r-1',
+    customerUid: 'uid-1',
+    rating: 5,
+  });
+
+  await assertSucceeds(getDoc(doc(staffDb(), 'reservation_reviews', 'review-1')));
+  await assertSucceeds(setDoc(doc(staffDb(), 'reservation_reviews', 'review-2'), {
+    reservationId: 'r-2',
+    customerUid: 'uid-2',
+    rating: 4,
+  }));
+
+  await assertFails(getDoc(doc(unauthDb(), 'reservation_reviews', 'review-1')));
+  await assertFails(setDoc(doc(unauthDb(), 'reservation_reviews', 'public-review'), {
+    reservationId: 'r-1',
+    customerUid: 'uid-1',
+    rating: 5,
+  }));
+});

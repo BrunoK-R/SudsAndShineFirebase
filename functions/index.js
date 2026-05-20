@@ -28,6 +28,12 @@ const {
   buildUserProfile,
   validateUserProfilePayload,
 } = require("./userProfile");
+const {
+  assertReservationReviewable,
+  buildReservationReviewDocument,
+  buildReservationReviewId,
+  validateReservationReviewInput,
+} = require("./reservationReviews");
 
 admin.initializeApp();
 const db = admin.firestore();
@@ -282,6 +288,47 @@ exports.getMyReservations = onCall(async (request) => {
     reservationDocs: Array.from(reservationsById.values()),
     serviceDocs: servicesSnap.docs,
   });
+});
+
+exports.submitReservationReview = onCall(async (request) => {
+  const uid = assertAuthenticatedUid(request);
+  const email = String(request.auth?.token?.email || "").trim().toLowerCase();
+  const review = validateReservationReviewInput(request.data);
+  const reservationRef = db.collection("reservations").doc(review.reservationId);
+  const reviewId = buildReservationReviewId(review.reservationId, uid);
+  const reviewRef = db.collection("reservation_reviews").doc(reviewId);
+
+  await db.runTransaction(async (tx) => {
+    const [reservationSnap, existingReviewSnap] = await Promise.all([
+      tx.get(reservationRef),
+      tx.get(reviewRef),
+    ]);
+    const reservationData = assertReservationReviewable({
+      reservationSnap,
+      uid,
+      email,
+    });
+    const createdAt = existingReviewSnap.exists ?
+      existingReviewSnap.get("createdAt") || admin.firestore.FieldValue.serverTimestamp() :
+      admin.firestore.FieldValue.serverTimestamp();
+
+    tx.set(reviewRef, {
+      ...buildReservationReviewDocument({
+        review,
+        reservationData,
+        uid,
+        email,
+      }),
+      createdAt,
+      updatedAt: admin.firestore.FieldValue.serverTimestamp(),
+    }, {merge: true});
+  });
+
+  return {
+    ok: true,
+    reviewId,
+    reservationId: review.reservationId,
+  };
 });
 
 exports.getMyVehicles = onCall(async (request) => {

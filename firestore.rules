@@ -100,6 +100,10 @@ service cloud.firestore {
       allow read, update, delete: if isStaff();
     }
 
+    match /reservation_reviews/{docId} {
+      allow read, write: if isStaff();
+    }
+
     match /blocked_slots/{docId} {
       allow read: if isStaff();
       allow write: if isAdmin();
