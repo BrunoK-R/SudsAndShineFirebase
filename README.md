@@ -11,6 +11,7 @@ This repository contains the Firebase-first infrastructure and Cloud Functions b
 - Initial composite indexes in `firestore.indexes.json`
 - Function stubs in `functions/index.js`:
   - `createReservation` callable with transactional conflict checks
+  - `getAvailability` callable for public month availability derived from capacity, reservations, and blocked slots
   - `assignAdminRole` callable for allowlist/claim assignment
   - `syncMyRole` callable to assign claims from `admin_allowlist` for authenticated users
   - `health` HTTP endpoint

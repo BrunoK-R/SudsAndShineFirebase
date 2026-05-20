@@ -2,10 +2,13 @@ const test = require("node:test");
 const assert = require("node:assert/strict");
 const {
   ACTIVE_RESERVATION_STATUS_VALUES,
+  buildAvailabilityMonth,
+  buildDefaultSlotWindows,
   countOverlappingReservations,
   generateDeterministicReservationCode,
   hasBlockedSlotOverlap,
   resolveCapacityLimit,
+  resolveAvailabilityRequest,
   validateCreateReservationInput,
 } = require("../createReservation");
 
@@ -93,4 +96,90 @@ test("active statuses include firebase and legacy values for migration compatibi
     "confirmado",
     "em_execucao",
   ]);
+});
+
+test("resolveAvailabilityRequest returns current month window with validated duration", () => {
+  const request = resolveAvailabilityRequest(
+    {anchorDate: "2026-05-20", serviceDurationMinutes: 45},
+    new Date("2026-05-20T08:00:00.000Z"),
+  );
+
+  assert.equal(request.monthStart, "2026-05-01");
+  assert.equal(request.monthEnd, "2026-05-31");
+  assert.equal(request.todayKey, "2026-05-20");
+  assert.equal(request.serviceDurationMinutes, 45);
+  assert.equal(request.slotIntervalMinutes, 30);
+});
+
+test("buildDefaultSlotWindows respects operating days and lunch break", () => {
+  const weekdaySlots = buildDefaultSlotWindows("2026-05-20", 30, 30).map((slot) => slot.time);
+  const saturdaySlots = buildDefaultSlotWindows("2026-05-23", 30, 30).map((slot) => slot.time);
+  const sundaySlots = buildDefaultSlotWindows("2026-05-24", 30, 30);
+
+  assert.ok(weekdaySlots.includes("09:00"));
+  assert.ok(weekdaySlots.includes("12:30"));
+  assert.ok(!weekdaySlots.includes("13:00"));
+  assert.ok(weekdaySlots.includes("14:00"));
+  assert.deepEqual(saturdaySlots, [
+    "09:00",
+    "09:30",
+    "10:00",
+    "10:30",
+    "11:00",
+    "11:30",
+    "12:00",
+    "12:30",
+  ]);
+  assert.deepEqual(sundaySlots, []);
+});
+
+test("buildAvailabilityMonth applies capacity, conflicts, blocked slots, and past dates", () => {
+  const request = resolveAvailabilityRequest(
+    {anchorDate: "2026-05-20", serviceDurationMinutes: 30},
+    new Date("2026-05-20T09:15:00.000Z"),
+  );
+
+  const availability = buildAvailabilityMonth({
+    request,
+    reservations: [
+      {
+        date: "2026-05-20",
+        status: "pending",
+        slotStart: "2026-05-20T09:30:00.000Z",
+        slotEnd: "2026-05-20T10:00:00.000Z",
+      },
+      {
+        date: "2026-05-20",
+        status: "confirmed",
+        slotStart: "2026-05-20T09:30:00.000Z",
+        slotEnd: "2026-05-20T10:00:00.000Z",
+      },
+      {
+        date: "2026-05-20",
+        status: "cancelled",
+        slotStart: "2026-05-20T10:00:00.000Z",
+        slotEnd: "2026-05-20T10:30:00.000Z",
+      },
+    ],
+    blockedSlots: [
+      {
+        date: "2026-05-20",
+        slotStart: "2026-05-20T10:30:00.000Z",
+        slotEnd: "2026-05-20T11:00:00.000Z",
+      },
+    ],
+    capacityOverrides: [{date: "2026-05-20", maxBookingsPerSlot: 2}],
+    defaultCapacitySetting: {key: "default_max_bookings_per_slot", value: 3},
+  });
+
+  const may19 = availability.days.find((day) => day.id === "2026-05-19");
+  const may20 = availability.days.find((day) => day.id === "2026-05-20");
+  assert.equal(availability.monthTitle, "maio 2026");
+  assert.equal(availability.leadingEmptyCells, 4);
+  assert.equal(may19.available, false);
+  assert.equal(may20.slots.find((slot) => slot.time === "09:00").available, false);
+  assert.equal(may20.slots.find((slot) => slot.time === "09:30").available, false);
+  assert.equal(may20.slots.find((slot) => slot.time === "10:00").available, true);
+  assert.equal(may20.slots.find((slot) => slot.time === "10:30").available, false);
+  assert.equal(may20.available, true);
 });

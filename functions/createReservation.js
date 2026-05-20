@@ -9,6 +9,34 @@ const ACTIVE_RESERVATION_STATUS_VALUES = [
   "confirmado",
   "em_execucao",
 ];
+const MONTH_NAMES_PT = [
+  "janeiro",
+  "fevereiro",
+  "março",
+  "abril",
+  "maio",
+  "junho",
+  "julho",
+  "agosto",
+  "setembro",
+  "outubro",
+  "novembro",
+  "dezembro",
+];
+const MONTH_SHORT_NAMES_PT = [
+  "jan",
+  "fev",
+  "mar",
+  "abr",
+  "mai",
+  "jun",
+  "jul",
+  "ago",
+  "set",
+  "out",
+  "nov",
+  "dez",
+];
 
 function assertRequiredString(value, fieldName) {
   if (typeof value !== "string" || !value.trim()) {
@@ -23,6 +51,81 @@ function parseISODateTime(value, fieldName) {
     throw new HttpsError("invalid-argument", `${fieldName} must be a valid ISO date string`);
   }
   return parsed;
+}
+
+function formatDateKey(date) {
+  return date.toISOString().slice(0, 10);
+}
+
+function parseDateKey(value, fieldName = "date") {
+  assertRequiredString(value, fieldName);
+  const trimmed = value.trim();
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(trimmed)) {
+    throw new HttpsError("invalid-argument", `${fieldName} must use YYYY-MM-DD format`);
+  }
+
+  const parsed = new Date(`${trimmed}T00:00:00.000Z`);
+  if (Number.isNaN(parsed.getTime()) || formatDateKey(parsed) !== trimmed) {
+    throw new HttpsError("invalid-argument", `${fieldName} must be a valid calendar date`);
+  }
+
+  return parsed;
+}
+
+function parsePositiveInteger(value, fieldName, defaultValue, minValue, maxValue) {
+  if (value === undefined || value === null || value === "") return defaultValue;
+
+  const parsed = typeof value === "number" ? value : Number(value);
+  if (!Number.isInteger(parsed) || parsed < minValue || parsed > maxValue) {
+    throw new HttpsError(
+      "invalid-argument",
+      `${fieldName} must be an integer between ${minValue} and ${maxValue}`,
+    );
+  }
+  return parsed;
+}
+
+function monthEndFor(anchorDate) {
+  return new Date(Date.UTC(anchorDate.getUTCFullYear(), anchorDate.getUTCMonth() + 1, 0));
+}
+
+function addDays(date, days) {
+  const copy = new Date(date.getTime());
+  copy.setUTCDate(copy.getUTCDate() + days);
+  return copy;
+}
+
+function formatTime(totalMinutes) {
+  const hours = Math.floor(totalMinutes / 60);
+  const minutes = totalMinutes % 60;
+  return `${String(hours).padStart(2, "0")}:${String(minutes).padStart(2, "0")}`;
+}
+
+function resolveAvailabilityRequest(rawData, now = new Date()) {
+  const data = rawData || {};
+  const todayKey = formatDateKey(now);
+  const anchorDate = parseDateKey(
+    typeof data.anchorDate === "string" && data.anchorDate.trim() ? data.anchorDate : todayKey,
+    "anchorDate",
+  );
+  const monthStart = new Date(Date.UTC(anchorDate.getUTCFullYear(), anchorDate.getUTCMonth(), 1));
+  const monthEnd = monthEndFor(anchorDate);
+
+  return {
+    anchorDate: formatDateKey(anchorDate),
+    monthStart: formatDateKey(monthStart),
+    monthEnd: formatDateKey(monthEnd),
+    todayKey,
+    now,
+    serviceDurationMinutes: parsePositiveInteger(
+      data.serviceDurationMinutes,
+      "serviceDurationMinutes",
+      30,
+      5,
+      480,
+    ),
+    slotIntervalMinutes: parsePositiveInteger(data.slotIntervalMinutes, "slotIntervalMinutes", 30, 5, 240),
+  };
 }
 
 function normalizeSlotWindow(record) {
@@ -118,6 +221,107 @@ function resolveCapacityLimit(defaultSetting, overrideSetting) {
   return fallbackDefaultCapacity;
 }
 
+function buildDefaultSlotWindows(dateKey, serviceDurationMinutes, slotIntervalMinutes) {
+  const date = parseDateKey(dateKey);
+  const dayOfWeek = date.getUTCDay();
+  if (dayOfWeek === 0) return [];
+
+  const openMinutes = 9 * 60;
+  const closeMinutes = dayOfWeek === 6 ? 13 * 60 : 19 * 60;
+  const lunchStart = 13 * 60;
+  const lunchEnd = 14 * 60;
+  const slots = [];
+
+  for (
+    let minutes = openMinutes;
+    minutes + serviceDurationMinutes <= closeMinutes;
+    minutes += slotIntervalMinutes
+  ) {
+    const endMinutes = minutes + serviceDurationMinutes;
+    const overlapsLunchBreak = dayOfWeek !== 6 && minutes < lunchEnd && endMinutes > lunchStart;
+    if (overlapsLunchBreak) continue;
+
+    slots.push({
+      time: formatTime(minutes),
+      start: new Date(`${dateKey}T${formatTime(minutes)}:00.000Z`),
+      end: new Date(`${dateKey}T${formatTime(endMinutes)}:00.000Z`),
+    });
+  }
+
+  return slots;
+}
+
+function buildAvailabilityMonth({
+  request,
+  reservations,
+  blockedSlots,
+  capacityOverrides,
+  defaultCapacitySetting,
+}) {
+  const monthStart = parseDateKey(request.monthStart);
+  const monthEnd = parseDateKey(request.monthEnd);
+  const daysInMonth = monthEnd.getUTCDate();
+  const month = monthStart.getUTCMonth();
+  const year = monthStart.getUTCFullYear();
+  const leadingEmptyCells = (monthStart.getUTCDay() + 6) % 7;
+
+  const capacityByDate = new Map();
+  for (const override of capacityOverrides || []) {
+    if (override && typeof override.date === "string") {
+      capacityByDate.set(override.date, override);
+    }
+  }
+
+  const activeReservations = (reservations || []).filter((item) => {
+    if (!item || typeof item !== "object") return false;
+    return ACTIVE_RESERVATION_STATUS_VALUES.includes(item.status);
+  });
+
+  const days = [];
+  for (let day = 1; day <= daysInMonth; day += 1) {
+    const date = addDays(monthStart, day - 1);
+    const dateKey = formatDateKey(date);
+    const defaultSlots = buildDefaultSlotWindows(
+      dateKey,
+      request.serviceDurationMinutes,
+      request.slotIntervalMinutes,
+    );
+    const capacityLimit = resolveCapacityLimit(defaultCapacitySetting, capacityByDate.get(dateKey));
+    const reservationsForDate = activeReservations.filter((item) => item.date === dateKey);
+    const blockedForDate = (blockedSlots || []).filter((item) => item.date === dateKey);
+
+    const slots = defaultSlots.map((slot) => {
+      const reservationCount = countOverlappingReservations(reservationsForDate, slot.start, slot.end);
+      const remainingCapacity = Math.max(0, capacityLimit - reservationCount);
+      const blocked = hasBlockedSlotOverlap(blockedForDate, slot.start, slot.end);
+      const isPastDate = dateKey < request.todayKey;
+      const isPastSlot = dateKey === request.todayKey && slot.start <= request.now;
+      const available = capacityLimit > 0 && remainingCapacity > 0 && !blocked && !isPastDate && !isPastSlot;
+
+      return {
+        time: slot.time,
+        available,
+        remainingCapacity,
+      };
+    });
+
+    days.push({
+      id: dateKey,
+      dayOfMonth: day,
+      dateLabel: `${day} ${MONTH_SHORT_NAMES_PT[month]}`,
+      summaryLabel: `${day} de ${MONTH_NAMES_PT[month]}, ${year}`,
+      available: slots.some((slot) => slot.available),
+      slots,
+    });
+  }
+
+  return {
+    monthTitle: `${MONTH_NAMES_PT[month]} ${year}`,
+    leadingEmptyCells,
+    days,
+  };
+}
+
 function generateDeterministicReservationCode(docId) {
   let seed = 2166136261;
   const input = String(docId || "");
@@ -182,9 +386,12 @@ function validateCreateReservationInput(rawData) {
 
 module.exports = {
   ACTIVE_RESERVATION_STATUS_VALUES,
+  buildAvailabilityMonth,
+  buildDefaultSlotWindows,
   countOverlappingReservations,
   generateDeterministicReservationCode,
   hasBlockedSlotOverlap,
   resolveCapacityLimit,
+  resolveAvailabilityRequest,
   validateCreateReservationInput,
 };

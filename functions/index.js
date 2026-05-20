@@ -3,10 +3,12 @@ const {setGlobalOptions, logger} = require("firebase-functions/v2");
 const {onCall, onRequest, HttpsError} = require("firebase-functions/v2/https");
 const {
   ACTIVE_RESERVATION_STATUS_VALUES,
+  buildAvailabilityMonth,
   countOverlappingReservations,
   generateDeterministicReservationCode,
   hasBlockedSlotOverlap,
   resolveCapacityLimit,
+  resolveAvailabilityRequest,
   validateCreateReservationInput,
 } = require("./createReservation");
 
@@ -130,6 +132,42 @@ exports.createReservation = onCall(async (request) => {
     reservationId: reservationRef.id,
     reservationCode,
   };
+});
+
+exports.getAvailability = onCall(async (request) => {
+  const availabilityRequest = resolveAvailabilityRequest(request.data);
+
+  const reservationsQuery = db
+    .collection("reservations")
+    .where("date", ">=", availabilityRequest.monthStart)
+    .where("date", "<=", availabilityRequest.monthEnd);
+  const blockedQuery = db
+    .collection("blocked_slots")
+    .where("date", ">=", availabilityRequest.monthStart)
+    .where("date", "<=", availabilityRequest.monthEnd);
+  const capacityOverrideQuery = db
+    .collection("capacity_overrides")
+    .where("date", ">=", availabilityRequest.monthStart)
+    .where("date", "<=", availabilityRequest.monthEnd);
+  const defaultCapacityQuery = db
+    .collection("business_settings")
+    .where("key", "==", "default_max_bookings_per_slot")
+    .limit(1);
+
+  const [reservationsSnap, blockedSnap, capacityOverrideSnap, defaultCapacitySnap] = await Promise.all([
+    reservationsQuery.get(),
+    blockedQuery.get(),
+    capacityOverrideQuery.get(),
+    defaultCapacityQuery.get(),
+  ]);
+
+  return buildAvailabilityMonth({
+    request: availabilityRequest,
+    reservations: reservationsSnap.docs.map((docSnap) => docSnap.data()),
+    blockedSlots: blockedSnap.docs.map((docSnap) => docSnap.data()),
+    capacityOverrides: capacityOverrideSnap.docs.map((docSnap) => docSnap.data()),
+    defaultCapacitySetting: defaultCapacitySnap.empty ? null : defaultCapacitySnap.docs[0].data(),
+  });
 });
 
 exports.assignAdminRole = onCall(async (request) => {
