@@ -22,6 +22,7 @@ test("normalizes reservations with catalog price and upcoming bucket", () => {
       slotEnd: "2026-05-20T10:45:00.000Z",
       status: "pending",
       vehicleType: "suv",
+      vehicleLabel: "BMW 320d",
     }),
     new Map([
       [
@@ -39,6 +40,7 @@ test("normalizes reservations with catalog price and upcoming bucket", () => {
 
   assert.equal(item.id, "reservation-1");
   assert.equal(item.reservationCode, "SS-ABCDEFGH");
+  assert.equal(item.vehicleLabel, "BMW 320d");
   assert.equal(item.priceCents, 3400);
   assert.equal(item.upcoming, true);
 });

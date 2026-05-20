@@ -34,6 +34,8 @@ test("validateCreateReservationInput sanitizes and validates data", () => {
     vehicleType: "suv",
     gdprConsent: true,
     notes: "  limpar interior  ",
+    userVehicleId: " vehicle-1 ",
+    vehicleLabel: " BMW 320d  ",
   });
 
   assert.equal(parsed.customerName, "Bruno");
@@ -44,6 +46,8 @@ test("validateCreateReservationInput sanitizes and validates data", () => {
   assert.equal(parsed.vehicleType, "suv");
   assert.equal(parsed.gdprConsent, true);
   assert.equal(parsed.notes, "limpar interior");
+  assert.equal(parsed.userVehicleId, "vehicle-1");
+  assert.equal(parsed.vehicleLabel, "BMW 320d");
 });
 
 test("validateCreateReservationInput rejects invalid slot ranges", () => {
@@ -56,6 +60,19 @@ test("validateCreateReservationInput rejects invalid slot ranges", () => {
       slotEnd: "2026-04-10T10:00:00.000Z",
     });
   }, /slotEnd must be after slotStart/);
+});
+
+test("validateCreateReservationInput rejects invalid saved vehicle ids", () => {
+  assert.throws(() => {
+    validateCreateReservationInput({
+      customerName: "Bruno",
+      customerEmail: "bkendleyr@gmail.com",
+      serviceId: "service",
+      slotStart: "2026-04-10T10:00:00.000Z",
+      slotEnd: "2026-04-10T12:00:00.000Z",
+      userVehicleId: "users/other",
+    });
+  }, /userVehicleId is invalid/);
 });
 
 test("resolveCapacityLimit prioritizes override over default and fallback", () => {

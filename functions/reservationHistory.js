@@ -59,6 +59,7 @@ function normalizeReservationDocument(doc, servicesById, now) {
     slotEnd,
     status,
     vehicleType: String(data.vehicleType || "passageiros").trim(),
+    vehicleLabel: String(data.vehicleLabel || "").trim(),
     priceCents: priceCentsForReservation(data, servicesById),
     upcoming: !completed,
   };

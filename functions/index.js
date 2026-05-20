@@ -65,6 +65,10 @@ function userVehiclesCollection(uid) {
   return db.collection("users").doc(uid).collection("vehicles");
 }
 
+function reservationVehicleTypeForComparison(vehicleType) {
+  return vehicleType === "passageiros" ? "passenger" : vehicleType;
+}
+
 exports.createReservation = onCall(async (request) => {
   const data = validateCreateReservationInput(request.data);
   const authenticatedUid = request.auth?.uid || null;
@@ -75,6 +79,10 @@ exports.createReservation = onCall(async (request) => {
 
   const reservationRef = db.collection("reservations").doc();
   const reservationCode = generateDeterministicReservationCode(reservationRef.id);
+
+  if (data.userVehicleId && !authenticatedUid) {
+    throw new HttpsError("unauthenticated", "Authentication required for saved vehicle reservations");
+  }
 
   await db.runTransaction(async (tx) => {
     const reservationsQuery = db
@@ -91,17 +99,42 @@ exports.createReservation = onCall(async (request) => {
       .collection("business_settings")
       .where("key", "==", "default_max_bookings_per_slot")
       .limit(1);
+    const userVehicleRef = data.userVehicleId ?
+      userVehiclesCollection(authenticatedUid).doc(data.userVehicleId) :
+      null;
 
-    const [reservationsSnap, blockedSnap, capacityOverrideSnap, defaultCapacitySnap] = await Promise.all([
+    const [
+      reservationsSnap,
+      blockedSnap,
+      capacityOverrideSnap,
+      defaultCapacitySnap,
+      userVehicleSnap,
+    ] = await Promise.all([
       tx.get(reservationsQuery),
       tx.get(blockedQuery),
       tx.get(capacityOverrideQuery),
       tx.get(defaultCapacityQuery),
+      userVehicleRef ? tx.get(userVehicleRef) : Promise.resolve(null),
     ]);
 
     const capacityOverride = capacityOverrideSnap.empty ? null : capacityOverrideSnap.docs[0].data();
     const defaultCapacitySetting = defaultCapacitySnap.empty ? null : defaultCapacitySnap.docs[0].data();
     const capacityLimit = resolveCapacityLimit(defaultCapacitySetting, capacityOverride);
+    let linkedVehicle = null;
+
+    if (data.userVehicleId) {
+      if (!userVehicleSnap?.exists) {
+        throw new HttpsError("not-found", "Vehicle not found");
+      }
+
+      linkedVehicle = normalizeVehicleDocument(userVehicleSnap);
+      if (!linkedVehicle) {
+        throw new HttpsError("failed-precondition", "Vehicle data is incomplete");
+      }
+      if (linkedVehicle.type !== reservationVehicleTypeForComparison(data.vehicleType)) {
+        throw new HttpsError("invalid-argument", "vehicleType must match the saved vehicle");
+      }
+    }
 
     if (capacityLimit <= 0) {
       throw new HttpsError("already-exists", "Selected time slot is unavailable");
@@ -130,6 +163,10 @@ exports.createReservation = onCall(async (request) => {
       slotEnd: slotEnd.toISOString(),
       date: dateKey,
       vehicleType: data.vehicleType,
+      userVehicleId: linkedVehicle?.id || null,
+      vehicleLabel: linkedVehicle ? `${linkedVehicle.brand} ${linkedVehicle.model}` : data.vehicleLabel,
+      vehiclePlate: linkedVehicle?.plate || "",
+      vehicleColor: linkedVehicle?.color || "",
       gdprConsent: data.gdprConsent,
       status: "pending",
       notes: data.notes,

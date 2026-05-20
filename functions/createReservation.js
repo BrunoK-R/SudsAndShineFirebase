@@ -44,6 +44,14 @@ function assertRequiredString(value, fieldName) {
   }
 }
 
+function normalizeOptionalShortText(value, maxLength) {
+  if (value === undefined || value === null) return "";
+  return String(value)
+    .trim()
+    .replace(/\s+/g, " ")
+    .slice(0, maxLength);
+}
+
 function parseISODateTime(value, fieldName) {
   assertRequiredString(value, fieldName);
   const parsed = new Date(value);
@@ -369,6 +377,10 @@ function validateCreateReservationInput(rawData) {
   if (!["passageiros", "suv"].includes(vehicleType)) {
     throw new HttpsError("invalid-argument", "vehicleType must be passageiros or suv");
   }
+  const userVehicleId = normalizeOptionalShortText(data.userVehicleId || data.vehicleId, 160);
+  if (userVehicleId.includes("/")) {
+    throw new HttpsError("invalid-argument", "userVehicleId is invalid");
+  }
 
   return {
     customerName: data.customerName.trim(),
@@ -381,6 +393,8 @@ function validateCreateReservationInput(rawData) {
     vehicleType,
     gdprConsent: data.gdprConsent === true,
     notes: typeof data.notes === "string" ? data.notes.trim() : "",
+    userVehicleId,
+    vehicleLabel: normalizeOptionalShortText(data.vehicleLabel, 160),
   };
 }
 
