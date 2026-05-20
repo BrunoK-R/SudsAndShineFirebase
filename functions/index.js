@@ -15,6 +15,9 @@ const {
   assertCatalogReadable,
   buildServiceCatalog,
 } = require("./serviceCatalog");
+const {
+  buildUserReservationHistory,
+} = require("./reservationHistory");
 
 admin.initializeApp();
 const db = admin.firestore();
@@ -46,6 +49,7 @@ async function getAllowlistedRole(email) {
 
 exports.createReservation = onCall(async (request) => {
   const data = validateCreateReservationInput(request.data);
+  const authenticatedUid = request.auth?.uid || null;
 
   const slotStart = data.slotStart;
   const slotEnd = data.slotEnd;
@@ -101,6 +105,7 @@ exports.createReservation = onCall(async (request) => {
       customerName: data.customerName,
       customerEmail: data.customerEmail,
       customerPhone: data.customerPhone,
+      customerUid: authenticatedUid,
       serviceId: data.serviceId,
       serviceName: data.serviceName,
       slotStart: slotStart.toISOString(),
@@ -179,6 +184,41 @@ exports.getServiceCatalog = onCall(async () => {
   const catalog = buildServiceCatalog(servicesSnap.docs);
   assertCatalogReadable(catalog);
   return catalog;
+});
+
+exports.getMyReservations = onCall(async (request) => {
+  if (!request.auth?.uid) {
+    throw new HttpsError("unauthenticated", "Authentication required");
+  }
+
+  const uid = request.auth.uid;
+  const email = String(request.auth.token.email || "").trim().toLowerCase();
+  const reservationQueries = [
+    db.collection("reservations").where("customerUid", "==", uid).limit(50).get(),
+  ];
+
+  if (email) {
+    reservationQueries.push(
+      db.collection("reservations").where("customerEmail", "==", email).limit(50).get(),
+    );
+  }
+
+  const [servicesSnap, ...reservationSnaps] = await Promise.all([
+    db.collection("services").get(),
+    ...reservationQueries,
+  ]);
+  const reservationsById = new Map();
+
+  for (const snap of reservationSnaps) {
+    for (const docSnap of snap.docs) {
+      reservationsById.set(docSnap.id, docSnap);
+    }
+  }
+
+  return buildUserReservationHistory({
+    reservationDocs: Array.from(reservationsById.values()),
+    serviceDocs: servicesSnap.docs,
+  });
 });
 
 exports.assignAdminRole = onCall(async (request) => {

@@ -13,6 +13,7 @@ This repository contains the Firebase-first infrastructure and Cloud Functions b
   - `getServiceCatalog` callable for public service pricing/duration catalog from Firestore `services`
   - `createReservation` callable with transactional conflict checks
   - `getAvailability` callable for public month availability derived from capacity, reservations, and blocked slots
+  - `getMyReservations` callable for authenticated user booking history from owned/legacy email reservations
   - `assignAdminRole` callable for allowlist/claim assignment
   - `syncMyRole` callable to assign claims from `admin_allowlist` for authenticated users
   - `health` HTTP endpoint
