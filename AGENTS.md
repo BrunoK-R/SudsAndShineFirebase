@@ -9,6 +9,14 @@ After completing each ticket:
 4. Commit only after explicit user approval.
 5. Proceed to the next ticket only after the commit is done.
 
+## Hosting Deployment Rule (Required)
+
+The website source of truth is `../Website/sudsandshine`. Firebase Hosting serves the built copy in this repo's `public/` directory.
+
+Before any hosting deploy, run `npm run prepare:hosting` from this repo, or use `npm run deploy:hosting`. The Firebase hosting `predeploy` hook also runs that preparation step automatically when `firebase deploy --only hosting` is used from this repo.
+
+Analogy: cook the website fresh in the kitchen (`../Website/sudsandshine`), pack the fresh takeaway box (`public/`), then deliver it with Firebase Hosting.
+
 ## Migration Done Criteria (Required)
 
 For any migrated feature, testing is mandatory before marking the ticket as done.

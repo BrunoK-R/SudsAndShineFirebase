@@ -46,6 +46,7 @@ const {
 
 admin.initializeApp();
 const db = admin.firestore();
+const USER_HISTORY_RESERVATION_LIMIT = 50;
 
 setGlobalOptions({
   maxInstances: 10,
@@ -96,16 +97,32 @@ function reservationVehicleTypeForComparison(vehicleType) {
   return vehicleType === "passageiros" ? "passenger" : vehicleType;
 }
 
-function userReservationQueries(uid, email) {
+function maybeLimitQuery(query, limit) {
+  return Number.isInteger(limit) && limit > 0 ? query.limit(limit) : query;
+}
+
+function authenticatedEmail(request) {
+  return String(request.auth?.token?.email || "").trim().toLowerCase();
+}
+
+function userReservationQueries(uid, email, {limit = USER_HISTORY_RESERVATION_LIMIT} = {}) {
   const queries = [
-    db.collection("reservations").where("customerUid", "==", uid).limit(50),
+    maybeLimitQuery(db.collection("reservations").where("customerUid", "==", uid), limit),
   ];
 
   if (email) {
-    queries.push(db.collection("reservations").where("customerEmail", "==", email).limit(50));
+    queries.push(maybeLimitQuery(db.collection("reservations").where("customerEmail", "==", email), limit));
   }
 
   return queries;
+}
+
+function userHistoryReservationQueries(uid, email) {
+  return userReservationQueries(uid, email, {limit: USER_HISTORY_RESERVATION_LIMIT});
+}
+
+function userLoyaltyReservationQueries(uid, email) {
+  return userReservationQueries(uid, email, {limit: null});
 }
 
 function uniqueReservationDocsFromSnaps(reservationSnaps) {
@@ -361,22 +378,27 @@ exports.getMyReservations = onCall(async (request) => {
   }
 
   const uid = request.auth.uid;
-  const email = String(request.auth.token.email || "").trim().toLowerCase();
-  const reservationQueries = userReservationQueries(uid, email);
+  const email = authenticatedEmail(request);
+  const historyReservationQueries = userHistoryReservationQueries(uid, email);
+  const loyaltyReservationQueries = userLoyaltyReservationQueries(uid, email);
 
   const [servicesSnap, redemptionSnap, ...reservationSnaps] = await Promise.all([
     db.collection("services").get(),
     userLoyaltyRedemptionsCollection(uid).limit(100).get(),
-    ...reservationQueries.map((query) => query.get()),
+    ...historyReservationQueries.map((query) => query.get()),
+    ...loyaltyReservationQueries.map((query) => query.get()),
   ]);
-  const reservationDocs = uniqueReservationDocsFromSnaps(reservationSnaps);
+  const historyReservationSnaps = reservationSnaps.slice(0, historyReservationQueries.length);
+  const loyaltyReservationSnaps = reservationSnaps.slice(historyReservationQueries.length);
+  const reservationDocs = uniqueReservationDocsFromSnaps(historyReservationSnaps);
+  const loyaltyReservationDocs = uniqueReservationDocsFromSnaps(loyaltyReservationSnaps);
 
   const reviewRefs = reservationDocs.map((reservationDoc) =>
     db.collection("reservation_reviews").doc(buildReservationReviewId(reservationDoc.id, uid)),
   );
   const reviewDocs = reviewRefs.length > 0 ? await db.getAll(...reviewRefs) : [];
   const loyalty = buildUserLoyalty({
-    reservationDocs,
+    reservationDocs: loyaltyReservationDocs,
     redemptionDocs: redemptionSnap.docs,
   });
 
@@ -390,11 +412,11 @@ exports.getMyReservations = onCall(async (request) => {
 
 exports.getMyLoyalty = onCall(async (request) => {
   const uid = assertAuthenticatedUid(request);
-  const email = String(request.auth?.token?.email || "").trim().toLowerCase();
+  const email = authenticatedEmail(request);
 
   const [redemptionSnap, ...reservationSnaps] = await Promise.all([
     userLoyaltyRedemptionsCollection(uid).limit(100).get(),
-    ...userReservationQueries(uid, email).map((query) => query.get()),
+    ...userLoyaltyReservationQueries(uid, email).map((query) => query.get()),
   ]);
 
   return buildUserLoyalty({
@@ -405,14 +427,14 @@ exports.getMyLoyalty = onCall(async (request) => {
 
 exports.redeemMyLoyaltyReward = onCall(async (request) => {
   const uid = assertAuthenticatedUid(request);
-  const email = String(request.auth?.token?.email || "").trim().toLowerCase();
+  const email = authenticatedEmail(request);
   let redemption = null;
   let loyalty = null;
 
   await db.runTransaction(async (tx) => {
     const [redemptionSnap, ...reservationSnaps] = await Promise.all([
       tx.get(userLoyaltyRedemptionsCollection(uid).limit(100)),
-      ...userReservationQueries(uid, email).map((query) => tx.get(query)),
+      ...userLoyaltyReservationQueries(uid, email).map((query) => tx.get(query)),
     ]);
     const reservationDocs = uniqueReservationDocsFromSnaps(reservationSnaps);
     const currentLoyalty = buildUserLoyalty({
@@ -479,7 +501,7 @@ exports.redeemMyLoyaltyReward = onCall(async (request) => {
 
 exports.submitReservationReview = onCall(async (request) => {
   const uid = assertAuthenticatedUid(request);
-  const email = String(request.auth?.token?.email || "").trim().toLowerCase();
+  const email = authenticatedEmail(request);
   const review = validateReservationReviewInput(request.data);
   const reservationRef = db.collection("reservations").doc(review.reservationId);
   const reviewId = buildReservationReviewId(review.reservationId, uid);
@@ -520,7 +542,7 @@ exports.submitReservationReview = onCall(async (request) => {
 
 exports.cancelMyReservation = onCall(async (request) => {
   const uid = assertAuthenticatedUid(request);
-  const email = String(request.auth?.token?.email || "").trim().toLowerCase();
+  const email = authenticatedEmail(request);
   const reservationId = assertReservationId(request.data?.reservationId || request.data?.id);
   const reservationRef = db.collection("reservations").doc(reservationId);
   let finalStatus = "cancelled";

@@ -2,6 +2,11 @@
   "name": "sudsandshine-firebase",
   "private": true,
   "scripts": {
+    "build:website": "npm --prefix ../Website/sudsandshine run build",
+    "sync:website": "rsync -a --delete ../Website/sudsandshine/dist/ public/",
+    "prepare:hosting": "npm run build:website && npm run sync:website",
+    "deploy:hosting": "firebase deploy --only hosting --project sudsandshine-bd3e2",
+    "deploy:all": "firebase deploy --project sudsandshine-bd3e2",
     "migrate:data": "node scripts/migrate-supabase-to-firebase.mjs",
     "test:migration": "node --test tests/migration/*.test.mjs",
     "test:rules": "firebase emulators:exec --only auth,firestore,storage \"node --test --test-concurrency=1 tests/rules/*.test.mjs\"",

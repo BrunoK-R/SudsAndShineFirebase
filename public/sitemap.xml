@@ -1,21 +1,24 @@
 <?xml version="1.0" encoding="UTF-8"?>
 <urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9">
   <url>
-    <loc>https://sudsandshine-bd3e2.web.app/</loc>
+    <loc>https://www.sudsandshine.pt/</loc>
   </url>
   <url>
-    <loc>https://sudsandshine-bd3e2.web.app/servicos</loc>
+    <loc>https://www.sudsandshine.pt/servicos</loc>
   </url>
   <url>
-    <loc>https://sudsandshine-bd3e2.web.app/marcacoes</loc>
+    <loc>https://www.sudsandshine.pt/portfolio</loc>
   </url>
   <url>
-    <loc>https://sudsandshine-bd3e2.web.app/portfolio</loc>
+    <loc>https://www.sudsandshine.pt/contacto</loc>
   </url>
   <url>
-    <loc>https://sudsandshine-bd3e2.web.app/contacto</loc>
+    <loc>https://www.sudsandshine.pt/privacidade</loc>
   </url>
   <url>
-    <loc>https://sudsandshine-bd3e2.web.app/privacidade</loc>
+    <loc>https://www.sudsandshine.pt/sobre</loc>
+  </url>
+  <url>
+    <loc>https://www.sudsandshine.pt/termos</loc>
   </url>
 </urlset>

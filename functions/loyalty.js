@@ -39,10 +39,7 @@ function isCompletedLoyaltyWash(data, now) {
   const status = normalizeStatus(data.status);
   if (isCancelledStatus(status)) return false;
   if (COMPLETED_STATUS_VALUES.includes(status)) return true;
-
-  const parsedEnd = new Date(data.slotEnd);
-  if (Number.isNaN(parsedEnd.getTime())) return false;
-  return parsedEnd < now;
+  return false;
 }
 
 function normalizeLoyaltyReservationDocument(doc, now) {

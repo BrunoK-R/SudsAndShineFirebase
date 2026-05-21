@@ -43,7 +43,13 @@ firebase deploy --only firestore:rules,firestore:indexes,storage
 # deploy functions
 firebase deploy --only functions
 
-# deploy hosting
+# build the website repo into this repo's public/ folder
+npm run prepare:hosting
+
+# deploy hosting (also runs prepare:hosting through firebase.json predeploy)
+npm run deploy:hosting
+
+# Firebase CLI direct hosting deploys from this repo also rebuild/sync first
 firebase deploy --only hosting
 ```
 

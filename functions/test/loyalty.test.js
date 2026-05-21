@@ -69,7 +69,7 @@ test("buildUserLoyalty subtracts claimed rewards from available rewards", () => 
   assert.equal(loyalty.redemptions.length, 1);
 });
 
-test("buildUserLoyalty ignores cancelled reservations and counts past completed slots", () => {
+test("buildUserLoyalty counts only explicitly completed reservations", () => {
   const loyalty = buildUserLoyalty({
     now: new Date("2026-05-20T12:00:00.000Z"),
     reservationDocs: [
@@ -99,10 +99,14 @@ test("buildUserLoyalty ignores cancelled reservations and counts past completed 
   });
 
   assert.equal(isCompletedLoyaltyWash({status: "cancelled"}, new Date()), false);
-  assert.equal(loyalty.totalWashes, 2);
+  assert.equal(isCompletedLoyaltyWash({
+    status: "pending",
+    slotEnd: "2026-05-10T09:45:00.000Z",
+  }, new Date("2026-05-20T12:00:00.000Z")), false);
+  assert.equal(loyalty.totalWashes, 1);
   assert.deepEqual(
     loyalty.stampHistory.map((item) => item.id),
-    ["past-pending", "completed"],
+    ["completed"],
   );
 });
 

@@ -13,4 +13,4 @@ Allow: /
 User-agent: *
 Allow: /
 
-Sitemap: https://sudsandshine-bd3e2.web.app/sitemap.xml
+Sitemap: https://www.sudsandshine.pt/sitemap.xml
