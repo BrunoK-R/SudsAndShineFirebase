@@ -1,8 +1,10 @@
 const test = require("node:test");
 const assert = require("node:assert/strict");
 const {
+  DEFAULT_EXTRAS,
   DEFAULT_SERVICES,
   buildServiceCatalog,
+  normalizeExtraDocument,
   normalizeServiceDocument,
   parseDurationMinutes,
   parsePriceCents,
@@ -66,7 +68,9 @@ test("buildServiceCatalog sorts active services and omits inactive documents", (
   ]);
 
   assert.equal(catalog.source, "firestore");
+  assert.equal(catalog.extrasSource, "default");
   assert.deepEqual(catalog.services.map((service) => service.id), ["standard", "interior"]);
+  assert.deepEqual(catalog.extras.map((extra) => extra.id), DEFAULT_EXTRAS.map((extra) => extra.id));
   assert.equal(catalog.services[0].sortOrder, undefined);
 });
 
@@ -78,6 +82,56 @@ test("buildServiceCatalog falls back to default services when Firestore is empty
     catalog.services.map((service) => service.id),
     DEFAULT_SERVICES.map((service) => service.id),
   );
+  assert.deepEqual(
+    catalog.extras.map((extra) => extra.id),
+    DEFAULT_EXTRAS.map((extra) => extra.id),
+  );
+});
+
+test("normalizes active service extra documents with legacy field shapes", () => {
+  const extra = normalizeExtraDocument("wax-doc", {
+    title: " Enceramento ",
+    subtitle: " Proteção extra ",
+    price: "15,00€",
+    icon: "shield",
+    sortOrder: "4",
+  });
+
+  assert.equal(extra.id, "wax-doc");
+  assert.equal(extra.name, "Enceramento");
+  assert.equal(extra.description, "Proteção extra");
+  assert.equal(extra.priceCents, 1500);
+  assert.equal(extra.iconKey, "shield");
+  assert.equal(extra.sortOrder, 4);
+});
+
+test("buildServiceCatalog sorts active extras and omits inactive extras", () => {
+  const catalog = buildServiceCatalog(
+    [],
+    [
+      doc("odor", {
+        name: "Tratamento de Odores",
+        priceCents: 1200,
+        sortOrder: 2,
+      }),
+      doc("inactive", {
+        name: "Inactive",
+        active: false,
+        priceCents: 999,
+        sortOrder: 1,
+      }),
+      doc("wax", {
+        name: "Enceramento",
+        price: "15,00€",
+        sortOrder: 1,
+      }),
+    ],
+  );
+
+  assert.equal(catalog.source, "default");
+  assert.equal(catalog.extrasSource, "firestore");
+  assert.deepEqual(catalog.extras.map((extra) => extra.id), ["wax", "odor"]);
+  assert.equal(catalog.extras[0].sortOrder, undefined);
 });
 
 test("catalog parsers coerce duration and euro prices", () => {

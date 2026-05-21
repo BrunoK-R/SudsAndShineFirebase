@@ -366,8 +366,11 @@ exports.getAvailability = onCall(async (request) => {
 });
 
 exports.getServiceCatalog = onCall(async () => {
-  const servicesSnap = await db.collection("services").get();
-  const catalog = buildServiceCatalog(servicesSnap.docs);
+  const [servicesSnap, extrasSnap] = await Promise.all([
+    db.collection("services").get(),
+    db.collection("service_extras").get(),
+  ]);
+  const catalog = buildServiceCatalog(servicesSnap.docs, extrasSnap.docs);
   assertCatalogReadable(catalog);
   return catalog;
 });
