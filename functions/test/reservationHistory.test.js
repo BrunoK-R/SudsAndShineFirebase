@@ -91,3 +91,37 @@ test("buildUserReservationHistory prefers stored rewarded reservation price", ()
 
   assert.equal(history.reservations[0].priceCents, 0);
 });
+
+test("buildUserReservationHistory includes persisted extras and fallback price", () => {
+  const history = buildUserReservationHistory({
+    now: new Date("2026-05-20T12:00:00.000Z"),
+    serviceDocs: [
+      doc("premium", {
+        name: "Lavagem Premium",
+        durationMinutes: 45,
+        passengerPriceCents: 3200,
+        suvPriceCents: 3400,
+      }),
+    ],
+    reservationDocs: [
+      doc("reservation-1", {
+        reservationCode: "SS-ABCDEFGH",
+        serviceId: "premium",
+        slotStart: "2026-05-21T10:00:00.000Z",
+        slotEnd: "2026-05-21T10:45:00.000Z",
+        status: "pending",
+        vehicleType: "passageiros",
+        extras: [
+          {id: "wax", name: "Enceramento", priceCents: 1500},
+          {id: "vacuum", name: "Aspiração Profunda", priceCents: 800},
+        ],
+      }),
+    ],
+  });
+
+  assert.equal(history.reservations[0].priceCents, 5500);
+  assert.deepEqual(history.reservations[0].extras, [
+    {id: "wax", name: "Enceramento", priceCents: 1500},
+    {id: "vacuum", name: "Aspiração Profunda", priceCents: 800},
+  ]);
+});

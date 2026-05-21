@@ -33,7 +33,37 @@ function priceCentsForReservation(data, servicesById) {
 
   const service = servicesById.get(String(data.serviceId || "").trim());
   if (!service) return null;
-  return data.vehicleType === "suv" ? service.suvPriceCents : service.passengerPriceCents;
+  const servicePriceCents = data.vehicleType === "suv" ? service.suvPriceCents : service.passengerPriceCents;
+  return servicePriceCents + extrasPriceCentsForReservation(data);
+}
+
+function normalizeReservationExtras(data) {
+  if (!Array.isArray(data.extras)) return [];
+
+  return data.extras
+    .map((extra) => {
+      if (!extra || typeof extra !== "object") return null;
+      const id = String(extra.id || "").trim();
+      const name = String(extra.name || "").trim();
+      const priceCents = Number(extra.priceCents);
+      if (!id || !name || !Number.isFinite(priceCents)) return null;
+      return {
+        id,
+        name,
+        priceCents: Math.max(0, Math.round(priceCents)),
+      };
+    })
+    .filter(Boolean)
+    .slice(0, 12);
+}
+
+function extrasPriceCentsForReservation(data) {
+  const storedExtrasPriceCents = Number(data.extrasPriceCents);
+  if (Number.isFinite(storedExtrasPriceCents)) {
+    return Math.max(0, Math.round(storedExtrasPriceCents));
+  }
+
+  return normalizeReservationExtras(data).reduce((total, extra) => total + extra.priceCents, 0);
 }
 
 function normalizeReviewDocument(doc) {
@@ -92,6 +122,7 @@ function normalizeReservationDocument(doc, servicesById, reviewsByReservationId,
     vehicleType: String(data.vehicleType || "passageiros").trim(),
     vehicleLabel: String(data.vehicleLabel || "").trim(),
     priceCents: priceCentsForReservation(data, servicesById),
+    extras: normalizeReservationExtras(data),
     upcoming: !completed,
     reviewed: review !== null,
     reviewRating: review?.reviewRating || null,

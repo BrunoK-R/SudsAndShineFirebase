@@ -53,6 +53,33 @@ function normalizeOptionalShortText(value, maxLength) {
     .slice(0, maxLength);
 }
 
+function normalizeExtraIds(value) {
+  if (value === undefined || value === null || value === "") return [];
+  if (!Array.isArray(value)) {
+    throw new HttpsError("invalid-argument", "extraIds must be an array");
+  }
+
+  const seen = new Set();
+  const extraIds = [];
+  for (const item of value) {
+    const rawId = item && typeof item === "object" ? item.id || item.extraId : item;
+    const id = String(rawId || "").trim();
+    if (!id) continue;
+    if (id.length > 120 || id.includes("/")) {
+      throw new HttpsError("invalid-argument", "extraIds contains an invalid extra");
+    }
+    const key = id.toLowerCase();
+    if (seen.has(key)) continue;
+    seen.add(key);
+    extraIds.push(id);
+  }
+
+  if (extraIds.length > 12) {
+    throw new HttpsError("invalid-argument", "extraIds supports at most 12 extras");
+  }
+  return extraIds;
+}
+
 function parseISODateTime(value, fieldName) {
   assertRequiredString(value, fieldName);
   const parsed = new Date(value);
@@ -386,6 +413,7 @@ function validateCreateReservationInput(rawData) {
   if (loyaltyRewardCode.includes("/")) {
     throw new HttpsError("invalid-argument", "loyaltyRewardCode is invalid");
   }
+  const extraIds = normalizeExtraIds(data.extraIds || data.selectedExtraIds || data.extras);
 
   return {
     customerName: data.customerName.trim(),
@@ -401,7 +429,32 @@ function validateCreateReservationInput(rawData) {
     userVehicleId,
     vehicleLabel: normalizeOptionalShortText(data.vehicleLabel, 160),
     loyaltyRewardCode,
+    extraIds,
   };
+}
+
+function resolveSelectedExtras(extraIds, catalogExtras) {
+  if (!extraIds || extraIds.length === 0) return [];
+
+  const extrasById = new Map((catalogExtras || []).map((extra) => [extra.id, extra]));
+  return extraIds.map((extraId) => {
+    const extra = extrasById.get(extraId);
+    if (!extra) {
+      throw new HttpsError("invalid-argument", "Um dos extras selecionados já não está disponível.");
+    }
+    return {
+      id: extra.id,
+      name: extra.name,
+      priceCents: Math.max(0, Math.round(Number(extra.priceCents) || 0)),
+    };
+  });
+}
+
+function totalSelectedExtrasPriceCents(selectedExtras) {
+  return (selectedExtras || []).reduce((total, extra) => {
+    const priceCents = Math.max(0, Math.round(Number(extra.priceCents) || 0));
+    return total + priceCents;
+  }, 0);
 }
 
 module.exports = {
@@ -411,7 +464,10 @@ module.exports = {
   countOverlappingReservations,
   generateDeterministicReservationCode,
   hasBlockedSlotOverlap,
+  normalizeExtraIds,
+  resolveSelectedExtras,
   resolveCapacityLimit,
   resolveAvailabilityRequest,
+  totalSelectedExtrasPriceCents,
   validateCreateReservationInput,
 };

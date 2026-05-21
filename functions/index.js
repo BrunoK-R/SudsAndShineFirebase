@@ -7,8 +7,10 @@ const {
   countOverlappingReservations,
   generateDeterministicReservationCode,
   hasBlockedSlotOverlap,
+  resolveSelectedExtras,
   resolveCapacityLimit,
   resolveAvailabilityRequest,
+  totalSelectedExtrasPriceCents,
   validateCreateReservationInput,
 } = require("./createReservation");
 const {
@@ -168,6 +170,7 @@ exports.createReservation = onCall(async (request) => {
   let appliedLoyaltyReward = null;
   let reservationPriceCents = null;
   let reservationDiscountCents = 0;
+  let reservationExtras = [];
 
   await db.runTransaction(async (tx) => {
     const reservationsQuery = db
@@ -185,6 +188,7 @@ exports.createReservation = onCall(async (request) => {
       .where("key", "==", "default_max_bookings_per_slot")
       .limit(1);
     const servicesQuery = db.collection("services");
+    const extrasQuery = db.collection("service_extras");
     const userVehicleRef = data.userVehicleId ?
       userVehiclesCollection(authenticatedUid).doc(data.userVehicleId) :
       null;
@@ -200,6 +204,7 @@ exports.createReservation = onCall(async (request) => {
       capacityOverrideSnap,
       defaultCapacitySnap,
       servicesSnap,
+      extrasSnap,
       userVehicleSnap,
       loyaltyRewardSnap,
     ] = await Promise.all([
@@ -208,6 +213,7 @@ exports.createReservation = onCall(async (request) => {
       tx.get(capacityOverrideQuery),
       tx.get(defaultCapacityQuery),
       tx.get(servicesQuery),
+      tx.get(extrasQuery),
       userVehicleRef ? tx.get(userVehicleRef) : Promise.resolve(null),
       loyaltyRewardQuery ? tx.get(loyaltyRewardQuery) : Promise.resolve(null),
     ]);
@@ -215,10 +221,13 @@ exports.createReservation = onCall(async (request) => {
     const capacityOverride = capacityOverrideSnap.empty ? null : capacityOverrideSnap.docs[0].data();
     const defaultCapacitySetting = defaultCapacitySnap.empty ? null : defaultCapacitySnap.docs[0].data();
     const capacityLimit = resolveCapacityLimit(defaultCapacitySetting, capacityOverride);
-    const serviceCatalog = buildServiceCatalog(servicesSnap.docs);
+    const serviceCatalog = buildServiceCatalog(servicesSnap.docs, extrasSnap.docs);
     const service = serviceCatalog.services.find((item) => item.id === data.serviceId) || null;
     const basePriceCents = priceCentsForService(service, data.vehicleType);
-    let priceCents = basePriceCents;
+    const selectedExtras = resolveSelectedExtras(data.extraIds, serviceCatalog.extras);
+    const extrasPriceCents = totalSelectedExtrasPriceCents(selectedExtras);
+    const subtotalPriceCents = basePriceCents === null ? null : basePriceCents + extrasPriceCents;
+    let priceCents = subtotalPriceCents;
     let discountCents = 0;
     let linkedVehicle = null;
     let loyaltyReward = null;
@@ -255,7 +264,7 @@ exports.createReservation = onCall(async (request) => {
     if (data.loyaltyRewardCode) {
       loyaltyReward = assertRedeemableLoyaltyRedemption(loyaltyRewardSnap?.docs?.[0], authenticatedUid);
       discountCents = basePriceCents === null ? 0 : basePriceCents;
-      priceCents = 0;
+      priceCents = basePriceCents === null ? null : extrasPriceCents;
     }
 
     tx.set(reservationRef, {
@@ -276,9 +285,13 @@ exports.createReservation = onCall(async (request) => {
       vehicleColor: linkedVehicle?.color || "",
       gdprConsent: data.gdprConsent,
       originalPriceCents: basePriceCents,
+      extrasPriceCents,
+      subtotalPriceCents,
       discountCents,
       priceCents,
-      paymentStatus: loyaltyReward ? "covered_by_loyalty" : "pending",
+      extraIds: selectedExtras.map((extra) => extra.id),
+      extras: selectedExtras,
+      paymentStatus: loyaltyReward && extrasPriceCents === 0 ? "covered_by_loyalty" : "pending",
       loyaltyRewardApplied: Boolean(loyaltyReward),
       loyaltyRewardCode: loyaltyReward?.rewardCode || "",
       loyaltyRedemptionId: loyaltyReward?.id || null,
@@ -306,6 +319,7 @@ exports.createReservation = onCall(async (request) => {
     } : null;
     reservationPriceCents = priceCents;
     reservationDiscountCents = discountCents;
+    reservationExtras = selectedExtras;
   });
 
   // Fire-and-forget email workflow. Booking success should not depend on email.
@@ -330,6 +344,7 @@ exports.createReservation = onCall(async (request) => {
     loyaltyRewardCode: appliedLoyaltyReward?.rewardCode || null,
     priceCents: reservationPriceCents,
     discountCents: reservationDiscountCents,
+    extras: reservationExtras,
   };
 });
 

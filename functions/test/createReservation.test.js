@@ -7,8 +7,11 @@ const {
   countOverlappingReservations,
   generateDeterministicReservationCode,
   hasBlockedSlotOverlap,
+  normalizeExtraIds,
+  resolveSelectedExtras,
   resolveCapacityLimit,
   resolveAvailabilityRequest,
+  totalSelectedExtrasPriceCents,
   validateCreateReservationInput,
 } = require("../createReservation");
 
@@ -37,6 +40,7 @@ test("validateCreateReservationInput sanitizes and validates data", () => {
     userVehicleId: " vehicle-1 ",
     vehicleLabel: " BMW 320d  ",
     loyaltyRewardCode: " ss-free-uid1-0001 ",
+    extraIds: [" wax ", "vacuum", "WAX", ""],
   });
 
   assert.equal(parsed.customerName, "Bruno");
@@ -50,6 +54,27 @@ test("validateCreateReservationInput sanitizes and validates data", () => {
   assert.equal(parsed.userVehicleId, "vehicle-1");
   assert.equal(parsed.vehicleLabel, "BMW 320d");
   assert.equal(parsed.loyaltyRewardCode, "SS-FREE-UID1-0001");
+  assert.deepEqual(parsed.extraIds, ["wax", "vacuum"]);
+});
+
+test("normalizeExtraIds accepts object and string ids with de-duplication", () => {
+  assert.deepEqual(
+    normalizeExtraIds([" wax ", {extraId: "vacuum"}, {id: "WAX"}, null]),
+    ["wax", "vacuum"],
+  );
+});
+
+test("resolveSelectedExtras returns catalog-priced line items in request order", () => {
+  const selected = resolveSelectedExtras(["vacuum", "wax"], [
+    {id: "wax", name: "Enceramento", priceCents: 1500},
+    {id: "vacuum", name: "Aspiração Profunda", priceCents: 800},
+  ]);
+
+  assert.deepEqual(selected, [
+    {id: "vacuum", name: "Aspiração Profunda", priceCents: 800},
+    {id: "wax", name: "Enceramento", priceCents: 1500},
+  ]);
+  assert.equal(totalSelectedExtrasPriceCents(selected), 2300);
 });
 
 test("validateCreateReservationInput rejects invalid slot ranges", () => {
