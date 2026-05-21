@@ -22,6 +22,7 @@ test("buildUserProfile falls back to auth token fields", () => {
     displayName: "Bruno Ribeiro",
     phoneNumber: "+351 913 005 855",
     marketingOptIn: false,
+    appointmentReminderOptIn: false,
   });
 });
 
@@ -37,6 +38,7 @@ test("buildUserProfile prefers stored profile data", () => {
       displayName: "Stored Name",
       phoneNumber: "913005855",
       marketingOptIn: true,
+      appointmentReminderOptIn: true,
     }),
   });
 
@@ -44,6 +46,7 @@ test("buildUserProfile prefers stored profile data", () => {
   assert.equal(result.profile.displayName, "Stored Name");
   assert.equal(result.profile.phoneNumber, "913005855");
   assert.equal(result.profile.marketingOptIn, true);
+  assert.equal(result.profile.appointmentReminderOptIn, true);
 });
 
 test("validateUserProfilePayload normalizes editable fields", () => {
@@ -51,12 +54,14 @@ test("validateUserProfilePayload normalizes editable fields", () => {
     displayName: "  Bruno Ribeiro  ",
     phoneNumber: " +351 913 005 855 ",
     marketingOptIn: true,
+    appointmentReminderOptIn: true,
   });
 
   assert.deepEqual(profile, {
     displayName: "Bruno Ribeiro",
     phoneNumber: "+351 913 005 855",
     marketingOptIn: true,
+    appointmentReminderOptIn: true,
   });
 });
 

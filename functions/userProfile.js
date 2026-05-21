@@ -34,6 +34,7 @@ function validateUserProfilePayload(data = {}) {
     displayName: normalizeRequiredText(data.displayName, "displayName", MAX_DISPLAY_NAME_LENGTH),
     phoneNumber: normalizePhoneNumber(data.phoneNumber),
     marketingOptIn: data.marketingOptIn === true,
+    appointmentReminderOptIn: data.appointmentReminderOptIn === true,
   };
 }
 
@@ -57,6 +58,7 @@ function normalizeUserProfile({uid, authToken = {}, userData = {}}) {
     displayName,
     phoneNumber,
     marketingOptIn: userData.marketingOptIn === true,
+    appointmentReminderOptIn: userData.appointmentReminderOptIn === true,
   };
 }
 
