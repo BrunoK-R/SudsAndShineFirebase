@@ -46,6 +46,11 @@ const {
   assertReservationId,
 } = require("./reservationCancellation");
 const {
+  assertReservationReschedulable,
+  docsExcludingReservation,
+  validateRescheduleReservationInput,
+} = require("./reservationReschedule");
+const {
   assertRedeemableLoyaltyRedemption,
   buildLoyaltyRewardCode,
   buildUserLoyalty,
@@ -668,6 +673,115 @@ exports.cancelMyReservation = onCall(async (request) => {
     ok: true,
     reservationId,
     status: finalStatus,
+  };
+});
+
+exports.rescheduleMyReservation = onCall(async (request) => {
+  const uid = assertAuthenticatedUid(request);
+  const email = authenticatedEmail(request);
+  const data = validateRescheduleReservationInput(request.data);
+  const reservationRef = db.collection("reservations").doc(data.reservationId);
+  const dateKey = data.dateKey;
+  let finalStatus = "pending";
+
+  await db.runTransaction(async (tx) => {
+    const reservationSnap = await tx.get(reservationRef);
+    const currentReservation = assertReservationReschedulable({
+      reservationSnap,
+      uid,
+      email,
+      newSlotStart: data.slotStart,
+      newSlotEnd: data.slotEnd,
+    });
+
+    const reservationsQuery = db
+      .collection("reservations")
+      .where("date", "==", dateKey)
+      .where("status", "in", ACTIVE_RESERVATION_STATUS_VALUES);
+    const blockedQuery = db.collection("blocked_slots").where("date", "==", dateKey);
+    const capacityOverrideQuery = db
+      .collection("capacity_overrides")
+      .where("date", "==", dateKey)
+      .limit(1);
+    const defaultCapacityQuery = db
+      .collection("business_settings")
+      .where("key", "==", "default_max_bookings_per_slot")
+      .limit(1);
+    const businessInfoRef = db.collection("business_settings").doc("business_info");
+    const businessInfoQuery = db
+      .collection("business_settings")
+      .where("key", "==", "business_info")
+      .limit(1);
+
+    const [
+      reservationsSnap,
+      blockedSnap,
+      capacityOverrideSnap,
+      defaultCapacitySnap,
+      businessInfoSnap,
+      keyedBusinessInfoSnap,
+    ] = await Promise.all([
+      tx.get(reservationsQuery),
+      tx.get(blockedQuery),
+      tx.get(capacityOverrideQuery),
+      tx.get(defaultCapacityQuery),
+      tx.get(businessInfoRef),
+      tx.get(businessInfoQuery),
+    ]);
+
+    const capacityOverride = capacityOverrideSnap.empty ? null : capacityOverrideSnap.docs[0].data();
+    const defaultCapacitySetting = defaultCapacitySnap.empty ? null : defaultCapacitySnap.docs[0].data();
+    const capacityLimit = resolveCapacityLimit(defaultCapacitySetting, capacityOverride);
+    const businessInfo = businessInfoFromSnapshots(businessInfoSnap, keyedBusinessInfoSnap);
+    const openingHours = openingHoursForAvailability(businessInfo, businessInfoSnap, keyedBusinessInfoSnap);
+
+    if (capacityLimit <= 0) {
+      throw new HttpsError("already-exists", "Selected time slot is unavailable");
+    }
+
+    if (!isSlotWithinOperatingHours({
+      dateKey,
+      slotStart: data.slotStart,
+      slotEnd: data.slotEnd,
+      openingHours,
+    })) {
+      throw new HttpsError("already-exists", "Selected time slot is outside business hours");
+    }
+
+    const blockedSlots = blockedSnap.docs.map((docSnap) => docSnap.data());
+    if (hasBlockedSlotOverlap(blockedSlots, data.slotStart, data.slotEnd)) {
+      throw new HttpsError("already-exists", "Selected time slot is blocked");
+    }
+
+    const reservations = docsExcludingReservation(reservationsSnap.docs, data.reservationId)
+      .map((docSnap) => docSnap.data());
+    const overlappingReservations = countOverlappingReservations(reservations, data.slotStart, data.slotEnd);
+    if (overlappingReservations >= capacityLimit) {
+      throw new HttpsError("already-exists", "Selected time slot is unavailable");
+    }
+
+    tx.update(reservationRef, {
+      slotStart: data.slotStart.toISOString(),
+      slotEnd: data.slotEnd.toISOString(),
+      date: dateKey,
+      status: "pending",
+      previousSlotStart: currentReservation.currentSlotStart.toISOString(),
+      previousSlotEnd: currentReservation.currentSlotEnd.toISOString(),
+      previousStatus: currentReservation.previousStatus,
+      rescheduledAt: admin.firestore.FieldValue.serverTimestamp(),
+      rescheduledByUid: uid,
+      rescheduleCount: admin.firestore.FieldValue.increment(1),
+      updatedAt: admin.firestore.FieldValue.serverTimestamp(),
+    });
+    finalStatus = "pending";
+  });
+
+  return {
+    ok: true,
+    reservationId: data.reservationId,
+    status: finalStatus,
+    slotStart: data.slotStart.toISOString(),
+    slotEnd: data.slotEnd.toISOString(),
   };
 });
 
