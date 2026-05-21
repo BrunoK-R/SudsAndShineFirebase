@@ -16,6 +16,10 @@ const {
   buildServiceCatalog,
 } = require("./serviceCatalog");
 const {
+  assertBusinessInfoReadable,
+  buildBusinessInfo,
+} = require("./businessInfo");
+const {
   buildUserReservationHistory,
 } = require("./reservationHistory");
 const {
@@ -373,6 +377,18 @@ exports.getServiceCatalog = onCall(async () => {
   const catalog = buildServiceCatalog(servicesSnap.docs, extrasSnap.docs);
   assertCatalogReadable(catalog);
   return catalog;
+});
+
+exports.getBusinessInfo = onCall(async () => {
+  const [directSnap, keyedSnap] = await Promise.all([
+    db.collection("business_settings").doc("business_info").get(),
+    db.collection("business_settings").where("key", "==", "business_info").limit(1).get(),
+  ]);
+  const businessInfo = buildBusinessInfo(
+    directSnap.exists ? directSnap : keyedSnap.docs[0],
+  );
+  assertBusinessInfoReadable(businessInfo);
+  return businessInfo;
 });
 
 exports.getMyReservations = onCall(async (request) => {
