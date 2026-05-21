@@ -16,6 +16,42 @@ function normalizeStatus(value) {
   return String(value || "pending").trim().toLowerCase();
 }
 
+function normalizePaymentStatus(value) {
+  const normalized = String(value || "pending")
+    .trim()
+    .toLowerCase()
+    .replace(/[-\s]+/g, "_");
+
+  switch (normalized) {
+    case "paid":
+    case "pago":
+    case "succeeded":
+    case "complete":
+    case "completed":
+      return "paid";
+    case "covered_by_loyalty":
+    case "loyalty":
+    case "reward":
+    case "recompensa":
+      return "covered_by_loyalty";
+    case "failed":
+    case "declined":
+    case "falhou":
+      return "failed";
+    case "refunded":
+    case "refund":
+    case "reembolsado":
+      return "refunded";
+    case "pending":
+    case "unpaid":
+    case "waiting_for_payment":
+    case "awaiting_payment":
+    case "pendente":
+    default:
+      return "pending";
+  }
+}
+
 function isCompletedReservation(status, slotEnd, now) {
   const normalizedStatus = normalizeStatus(status);
   if (COMPLETED_STATUS_VALUES.includes(normalizedStatus)) return true;
@@ -119,6 +155,7 @@ function normalizeReservationDocument(doc, servicesById, reviewsByReservationId,
     slotStart,
     slotEnd,
     status,
+    paymentStatus: normalizePaymentStatus(data.paymentStatus),
     vehicleType: String(data.vehicleType || "passageiros").trim(),
     vehicleLabel: String(data.vehicleLabel || "").trim(),
     priceCents: priceCentsForReservation(data, servicesById),
@@ -156,4 +193,5 @@ module.exports = {
   buildUserReservationHistory,
   normalizeReservationDocument,
   normalizeReviewDocument,
+  normalizePaymentStatus,
 };

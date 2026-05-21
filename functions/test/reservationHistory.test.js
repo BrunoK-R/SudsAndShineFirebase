@@ -83,6 +83,7 @@ test("buildUserReservationHistory prefers stored rewarded reservation price", ()
         status: "pending",
         vehicleType: "suv",
         loyaltyRewardApplied: true,
+        paymentStatus: "covered_by_loyalty",
         priceCents: 0,
         discountCents: 3400,
       }),
@@ -90,6 +91,7 @@ test("buildUserReservationHistory prefers stored rewarded reservation price", ()
   });
 
   assert.equal(history.reservations[0].priceCents, 0);
+  assert.equal(history.reservations[0].paymentStatus, "covered_by_loyalty");
 });
 
 test("buildUserReservationHistory includes persisted extras and fallback price", () => {
@@ -124,4 +126,41 @@ test("buildUserReservationHistory includes persisted extras and fallback price",
     {id: "wax", name: "Enceramento", priceCents: 1500},
     {id: "vacuum", name: "Aspiração Profunda", priceCents: 800},
   ]);
+});
+
+test("buildUserReservationHistory exposes normalized payment status", () => {
+  const history = buildUserReservationHistory({
+    now: new Date("2026-05-20T12:00:00.000Z"),
+    serviceDocs: [
+      doc("premium", {
+        name: "Lavagem Premium",
+        durationMinutes: 45,
+        passengerPriceCents: 3200,
+        suvPriceCents: 3400,
+      }),
+    ],
+    reservationDocs: [
+      doc("reservation-1", {
+        reservationCode: "SS-ABCDEFGH",
+        serviceId: "premium",
+        slotStart: "2026-05-21T10:00:00.000Z",
+        slotEnd: "2026-05-21T10:45:00.000Z",
+        status: "pending",
+        paymentStatus: "waiting-for-payment",
+        vehicleType: "passageiros",
+      }),
+      doc("reservation-2", {
+        reservationCode: "SS-HGFEDCBA",
+        serviceId: "premium",
+        slotStart: "2026-05-22T10:00:00.000Z",
+        slotEnd: "2026-05-22T10:45:00.000Z",
+        status: "pending",
+        paymentStatus: "PAID",
+        vehicleType: "passageiros",
+      }),
+    ],
+  });
+
+  assert.equal(history.reservations.find((item) => item.id === "reservation-1").paymentStatus, "pending");
+  assert.equal(history.reservations.find((item) => item.id === "reservation-2").paymentStatus, "paid");
 });

@@ -198,6 +198,7 @@ exports.createReservation = onCall(async (request) => {
   let reservationPriceCents = null;
   let reservationDiscountCents = 0;
   let reservationExtras = [];
+  let reservationPaymentStatus = "pending";
 
   await db.runTransaction(async (tx) => {
     const reservationsQuery = db
@@ -309,6 +310,8 @@ exports.createReservation = onCall(async (request) => {
       priceCents = basePriceCents === null ? null : extrasPriceCents;
     }
 
+    const paymentStatus = loyaltyReward && extrasPriceCents === 0 ? "covered_by_loyalty" : "pending";
+
     tx.set(reservationRef, {
       reservationCode,
       customerName: data.customerName,
@@ -333,7 +336,7 @@ exports.createReservation = onCall(async (request) => {
       priceCents,
       extraIds: selectedExtras.map((extra) => extra.id),
       extras: selectedExtras,
-      paymentStatus: loyaltyReward && extrasPriceCents === 0 ? "covered_by_loyalty" : "pending",
+      paymentStatus,
       loyaltyRewardApplied: Boolean(loyaltyReward),
       loyaltyRewardCode: loyaltyReward?.rewardCode || "",
       loyaltyRedemptionId: loyaltyReward?.id || null,
@@ -362,6 +365,7 @@ exports.createReservation = onCall(async (request) => {
     reservationPriceCents = priceCents;
     reservationDiscountCents = discountCents;
     reservationExtras = selectedExtras;
+    reservationPaymentStatus = paymentStatus;
   });
 
   // Fire-and-forget email workflow. Booking success should not depend on email.
@@ -387,6 +391,7 @@ exports.createReservation = onCall(async (request) => {
     priceCents: reservationPriceCents,
     discountCents: reservationDiscountCents,
     extras: reservationExtras,
+    paymentStatus: reservationPaymentStatus,
   };
 });
 
