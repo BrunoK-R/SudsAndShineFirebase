@@ -257,34 +257,223 @@ function resolveCapacityLimit(defaultSetting, overrideSetting) {
   return fallbackDefaultCapacity;
 }
 
-function buildDefaultSlotWindows(dateKey, serviceDurationMinutes, slotIntervalMinutes) {
+function normalizeComparableText(value) {
+  return String(value || "")
+    .normalize("NFD")
+    .replace(/[\u0300-\u036f]/g, "")
+    .toLowerCase();
+}
+
+function parseExplicitDayNumber(value) {
+  const parsed = typeof value === "number" ? value : Number(value);
+  if (!Number.isInteger(parsed)) return null;
+  if (parsed === 7) return 0;
+  return parsed >= 0 && parsed <= 6 ? parsed : null;
+}
+
+function dayNumbersFromLabel(label) {
+  const normalized = normalizeComparableText(label);
+  if (!normalized) return [];
+
+  if (
+    normalized.includes("todos") ||
+    normalized.includes("diariamente") ||
+    normalized.includes("daily")
+  ) {
+    return [0, 1, 2, 3, 4, 5, 6];
+  }
+
+  if (
+    normalized.includes("dias uteis") ||
+    normalized.includes("weekdays") ||
+    (normalized.includes("segunda") && normalized.includes("sexta")) ||
+    (normalized.includes("seg") && normalized.includes("sex"))
+  ) {
+    return [1, 2, 3, 4, 5];
+  }
+
+  if (normalized.includes("fim de semana") || normalized.includes("weekend")) {
+    return [0, 6];
+  }
+
+  const days = [];
+  const dayMatchers = [
+    {day: 0, keys: ["domingo", "dom", "sun"]},
+    {day: 1, keys: ["segunda", "seg", "mon"]},
+    {day: 2, keys: ["terca", "terça", "ter", "tue"]},
+    {day: 3, keys: ["quarta", "qua", "wed"]},
+    {day: 4, keys: ["quinta", "qui", "thu"]},
+    {day: 5, keys: ["sexta", "sex", "fri"]},
+    {day: 6, keys: ["sabado", "sábado", "sab", "sat"]},
+  ];
+
+  for (const matcher of dayMatchers) {
+    if (matcher.keys.some((key) => normalized.includes(normalizeComparableText(key)))) {
+      days.push(matcher.day);
+    }
+  }
+
+  return Array.from(new Set(days));
+}
+
+function dayNumbersFromOpeningHoursItem(item) {
+  const explicitDays = item.days ?? item.dayNumbers ?? item.dayOfWeek ?? item.dayOfWeeks;
+  const explicitValues = Array.isArray(explicitDays) ? explicitDays : [explicitDays];
+  const parsedExplicitDays = explicitValues
+    .map(parseExplicitDayNumber)
+    .filter((day) => day !== null);
+  if (parsedExplicitDays.length > 0) {
+    return Array.from(new Set(parsedExplicitDays));
+  }
+
+  return dayNumbersFromLabel(item.dayLabel || item.day || item.label);
+}
+
+function parseClockTimeToMinutes(hour, minute) {
+  const parsedHour = Number(hour);
+  const parsedMinute = Number(minute);
+  if (
+    !Number.isInteger(parsedHour) ||
+    !Number.isInteger(parsedMinute) ||
+    parsedHour < 0 ||
+    parsedHour > 23 ||
+    parsedMinute < 0 ||
+    parsedMinute > 59
+  ) {
+    return null;
+  }
+  return parsedHour * 60 + parsedMinute;
+}
+
+function parseClockTextToMinutes(value) {
+  const match = String(value || "").trim().match(/^([0-2]?\d):([0-5]\d)$/);
+  if (!match) return null;
+  return parseClockTimeToMinutes(match[1], match[2]);
+}
+
+function parseWindowObject(value) {
+  if (!value || typeof value !== "object") return null;
+
+  const start = parseClockTextToMinutes(value.start || value.open || value.from);
+  const end = parseClockTextToMinutes(value.end || value.close || value.to);
+  if (start === null || end === null || end <= start) return null;
+
+  return {
+    openMinutes: start,
+    closeMinutes: end,
+  };
+}
+
+function parseTimeRanges(hoursLabel) {
+  const label = normalizeComparableText(hoursLabel);
+  if (!label || label.includes("encerrado") || label.includes("fechado") || label.includes("closed")) {
+    return [];
+  }
+
+  const windows = [];
+  const timeRangePattern = /([0-2]?\d):([0-5]\d)\D+([0-2]?\d):([0-5]\d)/g;
+  let match;
+  while ((match = timeRangePattern.exec(String(hoursLabel || ""))) !== null) {
+    const openMinutes = parseClockTimeToMinutes(match[1], match[2]);
+    const closeMinutes = parseClockTimeToMinutes(match[3], match[4]);
+    if (openMinutes !== null && closeMinutes !== null && closeMinutes > openMinutes) {
+      windows.push({openMinutes, closeMinutes});
+    }
+  }
+
+  return windows;
+}
+
+function openingHoursWindowsForDay(openingHours, dayOfWeek) {
+  if (!Array.isArray(openingHours) || openingHours.length === 0) return null;
+
+  const windows = [];
+  for (const item of openingHours) {
+    if (!item || typeof item !== "object" || item.closed === true) continue;
+
+    const days = dayNumbersFromOpeningHoursItem(item);
+    if (!days.includes(dayOfWeek)) continue;
+
+    const itemWindows = Array.isArray(item.windows) ?
+      item.windows.map(parseWindowObject).filter(Boolean) :
+      parseTimeRanges(item.hoursLabel || item.hours || item.value);
+    windows.push(...itemWindows);
+  }
+
+  return windows.sort((left, right) => left.openMinutes - right.openMinutes);
+}
+
+function defaultOperatingWindowsForDate(dateKey) {
   const date = parseDateKey(dateKey);
   const dayOfWeek = date.getUTCDay();
   if (dayOfWeek === 0) return [];
-
-  const openMinutes = 9 * 60;
-  const closeMinutes = dayOfWeek === 6 ? 13 * 60 : 19 * 60;
-  const lunchStart = 13 * 60;
-  const lunchEnd = 14 * 60;
-  const slots = [];
-
-  for (
-    let minutes = openMinutes;
-    minutes + serviceDurationMinutes <= closeMinutes;
-    minutes += slotIntervalMinutes
-  ) {
-    const endMinutes = minutes + serviceDurationMinutes;
-    const overlapsLunchBreak = dayOfWeek !== 6 && minutes < lunchEnd && endMinutes > lunchStart;
-    if (overlapsLunchBreak) continue;
-
-    slots.push({
-      time: formatTime(minutes),
-      start: new Date(`${dateKey}T${formatTime(minutes)}:00.000Z`),
-      end: new Date(`${dateKey}T${formatTime(endMinutes)}:00.000Z`),
-    });
+  if (dayOfWeek === 6) {
+    return [{openMinutes: 9 * 60, closeMinutes: 13 * 60}];
   }
 
+  return [
+    {openMinutes: 9 * 60, closeMinutes: 13 * 60},
+    {openMinutes: 14 * 60, closeMinutes: 19 * 60},
+  ];
+}
+
+function operatingWindowsForDate(dateKey, openingHours = null) {
+  const date = parseDateKey(dateKey);
+  const configuredWindows = openingHoursWindowsForDay(openingHours, date.getUTCDay());
+  return configuredWindows === null ? defaultOperatingWindowsForDate(dateKey) : configuredWindows;
+}
+
+function buildSlotWindowsForOperatingWindows(dateKey, serviceDurationMinutes, slotIntervalMinutes, operatingWindows) {
+  const slots = [];
+  for (const window of operatingWindows) {
+    for (
+      let minutes = window.openMinutes;
+      minutes + serviceDurationMinutes <= window.closeMinutes;
+      minutes += slotIntervalMinutes
+    ) {
+      const endMinutes = minutes + serviceDurationMinutes;
+      slots.push({
+        time: formatTime(minutes),
+        start: new Date(`${dateKey}T${formatTime(minutes)}:00.000Z`),
+        end: new Date(`${dateKey}T${formatTime(endMinutes)}:00.000Z`),
+      });
+    }
+  }
   return slots;
+}
+
+function buildDefaultSlotWindows(dateKey, serviceDurationMinutes, slotIntervalMinutes) {
+  return buildSlotWindowsForOperatingWindows(
+    dateKey,
+    serviceDurationMinutes,
+    slotIntervalMinutes,
+    defaultOperatingWindowsForDate(dateKey),
+  );
+}
+
+function buildSlotWindows(dateKey, serviceDurationMinutes, slotIntervalMinutes, openingHours = null) {
+  return buildSlotWindowsForOperatingWindows(
+    dateKey,
+    serviceDurationMinutes,
+    slotIntervalMinutes,
+    operatingWindowsForDate(dateKey, openingHours),
+  );
+}
+
+function minutesSinceUtcMidnight(date) {
+  return date.getUTCHours() * 60 + date.getUTCMinutes();
+}
+
+function isSlotWithinOperatingHours({dateKey, slotStart, slotEnd, openingHours = null}) {
+  if (formatDateKey(slotStart) !== dateKey || formatDateKey(slotEnd) !== dateKey || slotEnd <= slotStart) {
+    return false;
+  }
+
+  const slotStartMinutes = minutesSinceUtcMidnight(slotStart);
+  const slotEndMinutes = minutesSinceUtcMidnight(slotEnd);
+  return operatingWindowsForDate(dateKey, openingHours).some((window) =>
+    slotStartMinutes >= window.openMinutes && slotEndMinutes <= window.closeMinutes,
+  );
 }
 
 function buildAvailabilityMonth({
@@ -293,6 +482,7 @@ function buildAvailabilityMonth({
   blockedSlots,
   capacityOverrides,
   defaultCapacitySetting,
+  openingHours,
 }) {
   const monthStart = parseDateKey(request.monthStart);
   const monthEnd = parseDateKey(request.monthEnd);
@@ -317,10 +507,11 @@ function buildAvailabilityMonth({
   for (let day = 1; day <= daysInMonth; day += 1) {
     const date = addDays(monthStart, day - 1);
     const dateKey = formatDateKey(date);
-    const defaultSlots = buildDefaultSlotWindows(
+    const defaultSlots = buildSlotWindows(
       dateKey,
       request.serviceDurationMinutes,
       request.slotIntervalMinutes,
+      openingHours,
     );
     const capacityLimit = resolveCapacityLimit(defaultCapacitySetting, capacityByDate.get(dateKey));
     const reservationsForDate = activeReservations.filter((item) => item.date === dateKey);
@@ -461,9 +652,11 @@ module.exports = {
   ACTIVE_RESERVATION_STATUS_VALUES,
   buildAvailabilityMonth,
   buildDefaultSlotWindows,
+  buildSlotWindows,
   countOverlappingReservations,
   generateDeterministicReservationCode,
   hasBlockedSlotOverlap,
+  isSlotWithinOperatingHours,
   normalizeExtraIds,
   resolveSelectedExtras,
   resolveCapacityLimit,

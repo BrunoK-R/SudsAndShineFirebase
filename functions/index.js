@@ -7,6 +7,7 @@ const {
   countOverlappingReservations,
   generateDeterministicReservationCode,
   hasBlockedSlotOverlap,
+  isSlotWithinOperatingHours,
   resolveSelectedExtras,
   resolveCapacityLimit,
   resolveAvailabilityRequest,
@@ -149,6 +150,32 @@ function priceCentsForService(service, vehicleType) {
   return Math.max(0, Math.round(parsed));
 }
 
+function selectedBusinessInfoSnapshot(directSnap, keyedSnap) {
+  return directSnap?.exists ? directSnap : keyedSnap?.docs?.[0];
+}
+
+function businessInfoFromSnapshots(directSnap, keyedSnap) {
+  return buildBusinessInfo(selectedBusinessInfoSnapshot(directSnap, keyedSnap));
+}
+
+function settingPayload(data) {
+  if (!data || typeof data !== "object") return {};
+  const nested = data.value && typeof data.value === "object" ? data.value : null;
+  return nested || data;
+}
+
+function hasConfiguredOpeningHours(docSnap) {
+  if (!docSnap?.exists) return false;
+  const source = settingPayload(docSnap.data());
+  const configured = source.openingHours || source.hours;
+  return Array.isArray(configured) && configured.length > 0;
+}
+
+function openingHoursForAvailability(businessInfo, directSnap, keyedSnap) {
+  const sourceSnap = selectedBusinessInfoSnapshot(directSnap, keyedSnap);
+  return hasConfiguredOpeningHours(sourceSnap) ? businessInfo.openingHours : null;
+}
+
 exports.createReservation = onCall(async (request) => {
   const data = validateCreateReservationInput(request.data);
   const authenticatedUid = request.auth?.uid || null;
@@ -187,6 +214,11 @@ exports.createReservation = onCall(async (request) => {
       .collection("business_settings")
       .where("key", "==", "default_max_bookings_per_slot")
       .limit(1);
+    const businessInfoRef = db.collection("business_settings").doc("business_info");
+    const businessInfoQuery = db
+      .collection("business_settings")
+      .where("key", "==", "business_info")
+      .limit(1);
     const servicesQuery = db.collection("services");
     const extrasQuery = db.collection("service_extras");
     const userVehicleRef = data.userVehicleId ?
@@ -203,6 +235,8 @@ exports.createReservation = onCall(async (request) => {
       blockedSnap,
       capacityOverrideSnap,
       defaultCapacitySnap,
+      businessInfoSnap,
+      keyedBusinessInfoSnap,
       servicesSnap,
       extrasSnap,
       userVehicleSnap,
@@ -212,6 +246,8 @@ exports.createReservation = onCall(async (request) => {
       tx.get(blockedQuery),
       tx.get(capacityOverrideQuery),
       tx.get(defaultCapacityQuery),
+      tx.get(businessInfoRef),
+      tx.get(businessInfoQuery),
       tx.get(servicesQuery),
       tx.get(extrasQuery),
       userVehicleRef ? tx.get(userVehicleRef) : Promise.resolve(null),
@@ -221,6 +257,8 @@ exports.createReservation = onCall(async (request) => {
     const capacityOverride = capacityOverrideSnap.empty ? null : capacityOverrideSnap.docs[0].data();
     const defaultCapacitySetting = defaultCapacitySnap.empty ? null : defaultCapacitySnap.docs[0].data();
     const capacityLimit = resolveCapacityLimit(defaultCapacitySetting, capacityOverride);
+    const businessInfo = businessInfoFromSnapshots(businessInfoSnap, keyedBusinessInfoSnap);
+    const openingHours = openingHoursForAvailability(businessInfo, businessInfoSnap, keyedBusinessInfoSnap);
     const serviceCatalog = buildServiceCatalog(servicesSnap.docs, extrasSnap.docs);
     const service = serviceCatalog.services.find((item) => item.id === data.serviceId) || null;
     const basePriceCents = priceCentsForService(service, data.vehicleType);
@@ -248,6 +286,10 @@ exports.createReservation = onCall(async (request) => {
 
     if (capacityLimit <= 0) {
       throw new HttpsError("already-exists", "Selected time slot is unavailable");
+    }
+
+    if (!isSlotWithinOperatingHours({dateKey, slotStart, slotEnd, openingHours})) {
+      throw new HttpsError("already-exists", "Selected time slot is outside business hours");
     }
 
     const blockedSlots = blockedSnap.docs.map((docSnap) => docSnap.data());
@@ -367,13 +409,28 @@ exports.getAvailability = onCall(async (request) => {
     .collection("business_settings")
     .where("key", "==", "default_max_bookings_per_slot")
     .limit(1);
+  const businessInfoRef = db.collection("business_settings").doc("business_info");
+  const businessInfoQuery = db
+    .collection("business_settings")
+    .where("key", "==", "business_info")
+    .limit(1);
 
-  const [reservationsSnap, blockedSnap, capacityOverrideSnap, defaultCapacitySnap] = await Promise.all([
+  const [
+    reservationsSnap,
+    blockedSnap,
+    capacityOverrideSnap,
+    defaultCapacitySnap,
+    businessInfoSnap,
+    keyedBusinessInfoSnap,
+  ] = await Promise.all([
     reservationsQuery.get(),
     blockedQuery.get(),
     capacityOverrideQuery.get(),
     defaultCapacityQuery.get(),
+    businessInfoRef.get(),
+    businessInfoQuery.get(),
   ]);
+  const businessInfo = businessInfoFromSnapshots(businessInfoSnap, keyedBusinessInfoSnap);
 
   return buildAvailabilityMonth({
     request: availabilityRequest,
@@ -381,6 +438,7 @@ exports.getAvailability = onCall(async (request) => {
     blockedSlots: blockedSnap.docs.map((docSnap) => docSnap.data()),
     capacityOverrides: capacityOverrideSnap.docs.map((docSnap) => docSnap.data()),
     defaultCapacitySetting: defaultCapacitySnap.empty ? null : defaultCapacitySnap.docs[0].data(),
+    openingHours: openingHoursForAvailability(businessInfo, businessInfoSnap, keyedBusinessInfoSnap),
   });
 });
 
@@ -399,9 +457,7 @@ exports.getBusinessInfo = onCall(async () => {
     db.collection("business_settings").doc("business_info").get(),
     db.collection("business_settings").where("key", "==", "business_info").limit(1).get(),
   ]);
-  const businessInfo = buildBusinessInfo(
-    directSnap.exists ? directSnap : keyedSnap.docs[0],
-  );
+  const businessInfo = businessInfoFromSnapshots(directSnap, keyedSnap);
   assertBusinessInfoReadable(businessInfo);
   return businessInfo;
 });

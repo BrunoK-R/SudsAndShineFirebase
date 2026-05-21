@@ -4,9 +4,11 @@ const {
   ACTIVE_RESERVATION_STATUS_VALUES,
   buildAvailabilityMonth,
   buildDefaultSlotWindows,
+  buildSlotWindows,
   countOverlappingReservations,
   generateDeterministicReservationCode,
   hasBlockedSlotOverlap,
+  isSlotWithinOperatingHours,
   normalizeExtraIds,
   resolveSelectedExtras,
   resolveCapacityLimit,
@@ -177,6 +179,62 @@ test("buildDefaultSlotWindows respects operating days and lunch break", () => {
   assert.deepEqual(sundaySlots, []);
 });
 
+test("buildSlotWindows honors configured business opening hours", () => {
+  const openingHours = [
+    {dayLabel: "Segunda a Sexta", hoursLabel: "10:00 - 12:00 / 14:00 - 16:00"},
+    {dayLabel: "Sábado", hoursLabel: "Encerrado", closed: true},
+    {dayLabel: "Domingo", hoursLabel: "Encerrado", closed: true},
+  ];
+
+  const weekdaySlots = buildSlotWindows("2026-05-20", 30, 30, openingHours).map((slot) => slot.time);
+  const saturdaySlots = buildSlotWindows("2026-05-23", 30, 30, openingHours);
+
+  assert.deepEqual(weekdaySlots, [
+    "10:00",
+    "10:30",
+    "11:00",
+    "11:30",
+    "14:00",
+    "14:30",
+    "15:00",
+    "15:30",
+  ]);
+  assert.deepEqual(saturdaySlots, []);
+});
+
+test("isSlotWithinOperatingHours rejects out-of-hours reservation windows", () => {
+  const openingHours = [
+    {dayLabel: "Dias úteis", hoursLabel: "10:00 - 12:00 / 14:00 - 16:00"},
+  ];
+
+  assert.equal(
+    isSlotWithinOperatingHours({
+      dateKey: "2026-05-20",
+      slotStart: new Date("2026-05-20T15:30:00.000Z"),
+      slotEnd: new Date("2026-05-20T16:00:00.000Z"),
+      openingHours,
+    }),
+    true,
+  );
+  assert.equal(
+    isSlotWithinOperatingHours({
+      dateKey: "2026-05-20",
+      slotStart: new Date("2026-05-20T16:00:00.000Z"),
+      slotEnd: new Date("2026-05-20T16:30:00.000Z"),
+      openingHours,
+    }),
+    false,
+  );
+  assert.equal(
+    isSlotWithinOperatingHours({
+      dateKey: "2026-05-20",
+      slotStart: new Date("2026-05-20T13:00:00.000Z"),
+      slotEnd: new Date("2026-05-20T13:30:00.000Z"),
+    }),
+    false,
+  );
+});
+
 test("buildAvailabilityMonth applies capacity, conflicts, blocked slots, and past dates", () => {
   const request = resolveAvailabilityRequest(
     {anchorDate: "2026-05-20", serviceDurationMinutes: 30},
@@ -226,4 +284,36 @@ test("buildAvailabilityMonth applies capacity, conflicts, blocked slots, and pas
   assert.equal(may20.slots.find((slot) => slot.time === "10:00").available, true);
   assert.equal(may20.slots.find((slot) => slot.time === "10:30").available, false);
   assert.equal(may20.available, true);
+});
+
+test("buildAvailabilityMonth uses configured business opening hours", () => {
+  const request = resolveAvailabilityRequest(
+    {anchorDate: "2026-05-20", serviceDurationMinutes: 30},
+    new Date("2026-05-20T08:00:00.000Z"),
+  );
+
+  const availability = buildAvailabilityMonth({
+    request,
+    reservations: [],
+    blockedSlots: [],
+    capacityOverrides: [],
+    defaultCapacitySetting: {key: "default_max_bookings_per_slot", value: 2},
+    openingHours: [
+      {dayLabel: "Segunda a Sexta", hoursLabel: "10:00 - 12:00"},
+      {dayLabel: "Sábado", hoursLabel: "Encerrado", closed: true},
+    ],
+  });
+
+  const may20 = availability.days.find((day) => day.id === "2026-05-20");
+  const may23 = availability.days.find((day) => day.id === "2026-05-23");
+
+  assert.deepEqual(may20.slots.map((slot) => slot.time), [
+    "10:00",
+    "10:30",
+    "11:00",
+    "11:30",
+  ]);
+  assert.equal(may20.available, true);
+  assert.deepEqual(may23.slots, []);
+  assert.equal(may23.available, false);
 });
