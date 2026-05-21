@@ -25,6 +25,7 @@ function validateVehiclePayload(payload) {
   const plate = normalizeShortText(payload.plate, 24).toUpperCase();
   const color = normalizeShortText(payload.color, 40);
   const type = normalizeVehicleType(payload.type || "passenger");
+  const isDefault = payload.isDefault === true;
 
   if (!brand) throw new HttpsError("invalid-argument", "Vehicle brand is required");
   if (!model) throw new HttpsError("invalid-argument", "Vehicle model is required");
@@ -37,6 +38,7 @@ function validateVehiclePayload(payload) {
     plate,
     color,
     type,
+    isDefault,
   };
 }
 
@@ -59,6 +61,7 @@ function normalizeVehicleDocument(doc) {
   const plate = normalizeShortText(data.plate, 24).toUpperCase();
   const color = normalizeShortText(data.color, 40);
   const type = normalizeVehicleType(data.type || "passenger");
+  const isDefault = data.isDefault === true;
 
   if (!id || !brand || !model || !plate || !type) return null;
 
@@ -69,6 +72,7 @@ function normalizeVehicleDocument(doc) {
     plate,
     color,
     type,
+    isDefault,
   };
 }
 

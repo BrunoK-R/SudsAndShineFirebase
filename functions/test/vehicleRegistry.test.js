@@ -20,6 +20,7 @@ test("validates and normalizes vehicle payloads", () => {
     plate: " aa-00-bb ",
     color: " Preto ",
     type: "passageiros",
+    isDefault: true,
   });
 
   assert.deepEqual(vehicle, {
@@ -28,6 +29,7 @@ test("validates and normalizes vehicle payloads", () => {
     plate: "AA-00-BB",
     color: "Preto",
     type: "passenger",
+    isDefault: true,
   });
 });
 
@@ -50,6 +52,7 @@ test("normalizes Firestore vehicle documents", () => {
       plate: "cc-11-dd",
       color: "Branco",
       type: "suv",
+      isDefault: true,
     }),
   );
 
@@ -57,6 +60,7 @@ test("normalizes Firestore vehicle documents", () => {
   assert.equal(vehicle.brand, "Volkswagen");
   assert.equal(vehicle.plate, "CC-11-DD");
   assert.equal(vehicle.type, "suv");
+  assert.equal(vehicle.isDefault, true);
 });
 
 test("buildUserVehicleList drops malformed documents without failing the list", () => {

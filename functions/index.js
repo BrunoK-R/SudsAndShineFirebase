@@ -732,19 +732,38 @@ exports.createVehicle = onCall(async (request) => {
   const data = validateVehiclePayload(request.data);
   const vehicleRef = userVehiclesCollection(uid).doc();
   const now = admin.firestore.FieldValue.serverTimestamp();
+  let savedVehicle = null;
 
-  await vehicleRef.set({
-    ...data,
-    ownerUid: uid,
-    createdAt: now,
-    updatedAt: now,
-    source: "mobile-app",
+  await db.runTransaction(async (tx) => {
+    const vehiclesSnap = await tx.get(userVehiclesCollection(uid).limit(50));
+    const isDefault = data.isDefault || vehiclesSnap.empty;
+    savedVehicle = {
+      ...data,
+      isDefault,
+    };
+
+    if (isDefault) {
+      vehiclesSnap.docs.forEach((docSnap) => {
+        tx.update(docSnap.ref, {
+          isDefault: false,
+          updatedAt: now,
+        });
+      });
+    }
+
+    tx.set(vehicleRef, {
+      ...savedVehicle,
+      ownerUid: uid,
+      createdAt: now,
+      updatedAt: now,
+      source: "mobile-app",
+    });
   });
 
   return {
     vehicle: {
       id: vehicleRef.id,
-      ...data,
+      ...savedVehicle,
     },
   };
 });
@@ -754,21 +773,43 @@ exports.updateVehicle = onCall(async (request) => {
   const vehicleId = assertVehicleId(request.data?.vehicleId || request.data?.id);
   const data = validateVehiclePayload(request.data);
   const vehicleRef = userVehiclesCollection(uid).doc(vehicleId);
-  const vehicleSnap = await vehicleRef.get();
+  let savedVehicle = null;
 
-  if (!vehicleSnap.exists) {
-    throw new HttpsError("not-found", "Vehicle not found");
-  }
+  await db.runTransaction(async (tx) => {
+    const vehicleSnap = await tx.get(vehicleRef);
 
-  await vehicleRef.update({
-    ...data,
-    updatedAt: admin.firestore.FieldValue.serverTimestamp(),
+    if (!vehicleSnap.exists) {
+      throw new HttpsError("not-found", "Vehicle not found");
+    }
+
+    const now = admin.firestore.FieldValue.serverTimestamp();
+    savedVehicle = {
+      ...data,
+      isDefault: data.isDefault,
+    };
+
+    if (data.isDefault) {
+      const vehiclesSnap = await tx.get(userVehiclesCollection(uid).limit(50));
+      vehiclesSnap.docs.forEach((docSnap) => {
+        if (docSnap.id !== vehicleId) {
+          tx.update(docSnap.ref, {
+            isDefault: false,
+            updatedAt: now,
+          });
+        }
+      });
+    }
+
+    tx.update(vehicleRef, {
+      ...savedVehicle,
+      updatedAt: now,
+    });
   });
 
   return {
     vehicle: {
       id: vehicleId,
-      ...data,
+      ...savedVehicle,
     },
   };
 });
@@ -777,13 +818,30 @@ exports.deleteVehicle = onCall(async (request) => {
   const uid = assertAuthenticatedUid(request);
   const vehicleId = assertVehicleId(request.data?.vehicleId || request.data?.id);
   const vehicleRef = userVehiclesCollection(uid).doc(vehicleId);
-  const vehicleSnap = await vehicleRef.get();
 
-  if (!vehicleSnap.exists) {
-    throw new HttpsError("not-found", "Vehicle not found");
-  }
+  await db.runTransaction(async (tx) => {
+    const [vehicleSnap, vehiclesSnap] = await Promise.all([
+      tx.get(vehicleRef),
+      tx.get(userVehiclesCollection(uid).orderBy("createdAt", "asc").limit(50)),
+    ]);
 
-  await vehicleRef.delete();
+    if (!vehicleSnap.exists) {
+      throw new HttpsError("not-found", "Vehicle not found");
+    }
+
+    const wasDefault = vehicleSnap.get("isDefault") === true;
+    const replacementSnap = wasDefault ?
+      vehiclesSnap.docs.find((docSnap) => docSnap.id !== vehicleId) :
+      null;
+
+    tx.delete(vehicleRef);
+    if (replacementSnap) {
+      tx.update(replacementSnap.ref, {
+        isDefault: true,
+        updatedAt: admin.firestore.FieldValue.serverTimestamp(),
+      });
+    }
+  });
 
   return {
     ok: true,
