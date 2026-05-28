@@ -52,6 +52,38 @@ function normalizePaymentStatus(value) {
   }
 }
 
+function timestampToIso(value) {
+  if (!value) return "";
+
+  if (typeof value === "string") {
+    const parsed = new Date(value);
+    return Number.isNaN(parsed.getTime()) ? "" : parsed.toISOString();
+  }
+
+  if (value instanceof Date) {
+    return Number.isNaN(value.getTime()) ? "" : value.toISOString();
+  }
+
+  if (typeof value.toDate === "function") {
+    const parsed = value.toDate();
+    return parsed instanceof Date && !Number.isNaN(parsed.getTime()) ? parsed.toISOString() : "";
+  }
+
+  if (Number.isFinite(value.seconds)) {
+    const nanoseconds = Number.isFinite(value.nanoseconds) ? value.nanoseconds : 0;
+    const parsed = new Date(value.seconds * 1000 + Math.floor(nanoseconds / 1000000));
+    return Number.isNaN(parsed.getTime()) ? "" : parsed.toISOString();
+  }
+
+  return "";
+}
+
+function normalizeRescheduleCount(value) {
+  const parsed = Number(value);
+  if (!Number.isFinite(parsed)) return 0;
+  return Math.max(0, Math.round(parsed));
+}
+
 function isCompletedReservation(status, slotEnd, now) {
   const normalizedStatus = normalizeStatus(status);
   if (COMPLETED_STATUS_VALUES.includes(normalizedStatus)) return true;
@@ -164,6 +196,13 @@ function normalizeReservationDocument(doc, servicesById, reviewsByReservationId,
     reviewed: review !== null,
     reviewRating: review?.reviewRating || null,
     reviewTags: review?.reviewTags || [],
+    createdAt: timestampToIso(data.createdAt),
+    updatedAt: timestampToIso(data.updatedAt),
+    cancelledAt: timestampToIso(data.cancelledAt) || null,
+    rescheduledAt: timestampToIso(data.rescheduledAt) || null,
+    previousSlotStart: String(data.previousSlotStart || "").trim() || null,
+    previousSlotEnd: String(data.previousSlotEnd || "").trim() || null,
+    rescheduleCount: normalizeRescheduleCount(data.rescheduleCount),
   };
 }
 
@@ -194,4 +233,5 @@ module.exports = {
   normalizeReservationDocument,
   normalizeReviewDocument,
   normalizePaymentStatus,
+  timestampToIso,
 };

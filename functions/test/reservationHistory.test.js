@@ -164,3 +164,53 @@ test("buildUserReservationHistory exposes normalized payment status", () => {
   assert.equal(history.reservations.find((item) => item.id === "reservation-1").paymentStatus, "pending");
   assert.equal(history.reservations.find((item) => item.id === "reservation-2").paymentStatus, "paid");
 });
+
+test("buildUserReservationHistory exposes reservation change audit metadata", () => {
+  const history = buildUserReservationHistory({
+    now: new Date("2026-05-20T12:00:00.000Z"),
+    serviceDocs: [
+      doc("premium", {
+        name: "Lavagem Premium",
+        durationMinutes: 45,
+        passengerPriceCents: 3200,
+        suvPriceCents: 3400,
+      }),
+    ],
+    reservationDocs: [
+      doc("reservation-1", {
+        reservationCode: "SS-ABCDEFGH",
+        serviceId: "premium",
+        slotStart: "2026-05-22T11:00:00.000Z",
+        slotEnd: "2026-05-22T11:45:00.000Z",
+        status: "pending",
+        vehicleType: "suv",
+        createdAt: {seconds: 1779271200, nanoseconds: 250000000},
+        updatedAt: "2026-05-20T10:30:00.000Z",
+        rescheduledAt: {toDate: () => new Date("2026-05-20T10:30:00.000Z")},
+        previousSlotStart: "2026-05-21T10:00:00.000Z",
+        previousSlotEnd: "2026-05-21T10:45:00.000Z",
+        rescheduleCount: "2",
+      }),
+      doc("reservation-2", {
+        reservationCode: "SS-HGFEDCBA",
+        serviceId: "premium",
+        slotStart: "2026-05-18T10:00:00.000Z",
+        slotEnd: "2026-05-18T10:45:00.000Z",
+        status: "cancelled",
+        vehicleType: "passageiros",
+        cancelledAt: new Date("2026-05-17T16:30:00.000Z"),
+      }),
+    ],
+  });
+
+  const rescheduled = history.reservations.find((item) => item.id === "reservation-1");
+  assert.equal(rescheduled.createdAt, "2026-05-20T10:00:00.250Z");
+  assert.equal(rescheduled.updatedAt, "2026-05-20T10:30:00.000Z");
+  assert.equal(rescheduled.rescheduledAt, "2026-05-20T10:30:00.000Z");
+  assert.equal(rescheduled.previousSlotStart, "2026-05-21T10:00:00.000Z");
+  assert.equal(rescheduled.previousSlotEnd, "2026-05-21T10:45:00.000Z");
+  assert.equal(rescheduled.rescheduleCount, 2);
+
+  const cancelled = history.reservations.find((item) => item.id === "reservation-2");
+  assert.equal(cancelled.cancelledAt, "2026-05-17T16:30:00.000Z");
+});
