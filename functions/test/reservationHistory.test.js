@@ -46,6 +46,7 @@ test("buildUserReservationHistory includes review metadata for reviewed reservat
         reservationId: "reservation-1",
         rating: 5,
         tags: ["Qualidade", "Rápido"],
+        comment: "  Ficou impecável.  ",
       }),
     ],
   });
@@ -56,11 +57,13 @@ test("buildUserReservationHistory includes review metadata for reviewed reservat
   assert.equal(reviewed.reviewed, true);
   assert.equal(reviewed.reviewRating, 5);
   assert.deepEqual(reviewed.reviewTags, ["Qualidade", "Rápido"]);
+  assert.equal(reviewed.reviewComment, "Ficou impecável.");
 
   const unreviewed = history.reservations.find((reservation) => reservation.id === "reservation-2");
   assert.equal(unreviewed.reviewed, false);
   assert.equal(unreviewed.reviewRating, null);
   assert.deepEqual(unreviewed.reviewTags, []);
+  assert.equal(unreviewed.reviewComment, "");
 });
 
 test("buildUserReservationHistory prefers stored rewarded reservation price", () => {

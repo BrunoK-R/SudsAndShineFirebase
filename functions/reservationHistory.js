@@ -151,11 +151,15 @@ function normalizeReviewDocument(doc) {
       .filter(Boolean)
       .slice(0, 8) :
     [];
+  const reviewComment = String(data.comment || "")
+    .trim()
+    .slice(0, 1000);
 
   return {
     reservationId,
     reviewRating,
     reviewTags,
+    reviewComment,
   };
 }
 
@@ -196,6 +200,7 @@ function normalizeReservationDocument(doc, servicesById, reviewsByReservationId,
     reviewed: review !== null,
     reviewRating: review?.reviewRating || null,
     reviewTags: review?.reviewTags || [],
+    reviewComment: review?.reviewComment || "",
     createdAt: timestampToIso(data.createdAt),
     updatedAt: timestampToIso(data.updatedAt),
     cancelledAt: timestampToIso(data.cancelledAt) || null,
