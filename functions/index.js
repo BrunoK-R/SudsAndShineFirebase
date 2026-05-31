@@ -97,6 +97,14 @@ const {
   buildNotificationSettingsValue,
   validateNotificationSettingsUpdateInput,
 } = require("./notificationAdmin");
+const {
+  buildNotificationTokenValue,
+  buildUserNotificationPreferences,
+  buildUserNotificationPreferencesValue,
+  validateNotificationTokenDeleteInput,
+  validateNotificationTokenRegistrationInput,
+  validateUserNotificationPreferencesInput,
+} = require("./notificationPreferences");
 
 admin.initializeApp();
 const db = admin.firestore();
@@ -172,6 +180,14 @@ function legacyLoyaltySettingsRef() {
 
 function notificationSettingsRef() {
   return db.collection("admin_settings").doc("notification_settings");
+}
+
+function userNotificationPreferencesRef(uid) {
+  return userDocument(uid).collection("notification_preferences").doc("default");
+}
+
+function userNotificationTokensCollection(uid) {
+  return userDocument(uid).collection("notification_tokens");
 }
 
 function selectedLoyaltySettingsSnapshot(primarySnap, legacySnap) {
@@ -994,6 +1010,17 @@ exports.updateMyProfile = onCall(async (request) => {
     },
     {merge: true},
   );
+  await userNotificationPreferencesRef(uid).set(
+    {
+      ownerUid: uid,
+      appointmentReminderEnabled: data.appointmentReminderOptIn,
+      marketingEnabled: data.marketingOptIn,
+      updatedAt: now,
+      updatedByUid: uid,
+      updateSource: "mobile-profile",
+    },
+    {merge: true},
+  );
 
   admin.auth().updateUser(uid, {displayName: data.displayName}).catch((err) => {
     logger.warn("Firebase Auth displayName update failed", {
@@ -1008,6 +1035,111 @@ exports.updateMyProfile = onCall(async (request) => {
     authToken: request.auth?.token || {},
     userDoc: updatedSnap,
   });
+});
+
+exports.getMyNotificationPreferences = onCall(async (request) => {
+  const uid = assertAuthenticatedUid(request);
+  const [preferencesSnap, userSnap] = await Promise.all([
+    userNotificationPreferencesRef(uid).get(),
+    userDocument(uid).get(),
+  ]);
+
+  return {
+    preferences: buildUserNotificationPreferences({
+      preferencesDoc: preferencesSnap,
+      userDoc: userSnap,
+    }),
+  };
+});
+
+exports.updateMyNotificationPreferences = onCall(async (request) => {
+  const uid = assertAuthenticatedUid(request);
+  const preferences = validateUserNotificationPreferencesInput(request.data);
+  const value = buildUserNotificationPreferencesValue(preferences);
+  const now = admin.firestore.FieldValue.serverTimestamp();
+
+  await db.runTransaction(async (tx) => {
+    tx.set(
+      userNotificationPreferencesRef(uid),
+      {
+        ownerUid: uid,
+        ...value,
+        updatedAt: now,
+        updatedByUid: uid,
+        updateSource: "mobile-notifications",
+      },
+      {merge: true},
+    );
+    tx.set(
+      userDocument(uid),
+      {
+        uid,
+        email: String(request.auth?.token?.email || "").trim().toLowerCase(),
+        marketingOptIn: preferences.marketingEnabled,
+        appointmentReminderOptIn: preferences.appointmentReminderEnabled,
+        updatedAt: now,
+      },
+      {merge: true},
+    );
+  });
+
+  return {preferences};
+});
+
+exports.registerNotificationToken = onCall(async (request) => {
+  const uid = assertAuthenticatedUid(request);
+  const registration = validateNotificationTokenRegistrationInput(request.data);
+  const tokenRef = userNotificationTokensCollection(uid).doc(registration.tokenId);
+  const now = admin.firestore.FieldValue.serverTimestamp();
+
+  await db.runTransaction(async (tx) => {
+    const tokenSnap = await tx.get(tokenRef);
+    tx.set(
+      tokenRef,
+      {
+        ...buildNotificationTokenValue(registration, uid),
+        createdAt: tokenSnap.exists ? tokenSnap.get("createdAt") || now : now,
+        lastSeenAt: now,
+        updatedAt: now,
+        revokedAt: admin.firestore.FieldValue.delete(),
+        updateSource: "mobile-notification-token",
+      },
+      {merge: true},
+    );
+  });
+
+  return {
+    token: {
+      tokenId: registration.tokenId,
+      platform: registration.platform,
+      enabled: true,
+    },
+  };
+});
+
+exports.deleteNotificationToken = onCall(async (request) => {
+  const uid = assertAuthenticatedUid(request);
+  const deletion = validateNotificationTokenDeleteInput(request.data);
+  const now = admin.firestore.FieldValue.serverTimestamp();
+
+  await userNotificationTokensCollection(uid).doc(deletion.tokenId).set(
+    {
+      ownerUid: uid,
+      tokenId: deletion.tokenId,
+      token: admin.firestore.FieldValue.delete(),
+      enabled: false,
+      revokedAt: now,
+      updatedAt: now,
+      updateSource: "mobile-notification-token-revoke",
+    },
+    {merge: true},
+  );
+
+  return {
+    ok: true,
+    tokenId: deletion.tokenId,
+    status: "revoked",
+  };
 });
 
 exports.createVehicle = onCall(async (request) => {

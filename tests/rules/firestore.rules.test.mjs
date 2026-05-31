@@ -7,7 +7,7 @@ import {
   assertSucceeds,
   initializeTestEnvironment,
 } from '@firebase/rules-unit-testing';
-import {Timestamp, doc, getDoc, setDoc, updateDoc} from 'firebase/firestore';
+import {Timestamp, deleteDoc, doc, getDoc, setDoc, updateDoc} from 'firebase/firestore';
 
 const PROJECT_ID = 'sudsandshine-rules-firestore';
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
@@ -41,6 +41,10 @@ function staffDb() {
 
 function adminDb() {
   return testEnv.authenticatedContext('admin-1', {role: 'admin'}).firestore();
+}
+
+function userDb(uid) {
+  return testEnv.authenticatedContext(uid, {}).firestore();
 }
 
 function validReservationPayload() {
@@ -159,6 +163,82 @@ test('admin settings are hidden from non-admin direct clients', async () => {
   await assertSucceeds(setDoc(doc(adminDb(), 'admin_settings', 'notification_settings'), {
     value: {bookingStatusEnabled: true},
   }));
+});
+
+test('users can only manage their own notification preferences and tokens', async () => {
+  const now = Timestamp.fromDate(new Date());
+  await seedDoc('users/user-1/notification_preferences', 'default', {
+    ownerUid: 'user-1',
+    bookingStatusEnabled: true,
+    appointmentReminderEnabled: true,
+    loyaltyEnabled: true,
+    marketingEnabled: false,
+    updatedAt: now,
+    updatedByUid: 'user-1',
+  });
+  await seedDoc('users/user-1/notification_tokens', 'current-test-device', {
+    ownerUid: 'user-1',
+    tokenId: 'current-test-device',
+    platform: 'android',
+    token: 'test-token-for-current-device-1234567890',
+    enabled: true,
+    createdAt: now,
+    updatedAt: now,
+  });
+
+  await assertSucceeds(getDoc(doc(userDb('user-1'), 'users', 'user-1', 'notification_preferences', 'default')));
+  await assertFails(getDoc(doc(userDb('user-2'), 'users', 'user-1', 'notification_preferences', 'default')));
+  await assertFails(setDoc(doc(userDb('user-2'), 'users', 'user-1', 'notification_preferences', 'default'), {
+    ownerUid: 'user-1',
+    bookingStatusEnabled: false,
+    appointmentReminderEnabled: false,
+    loyaltyEnabled: false,
+    marketingEnabled: true,
+    updatedAt: now,
+    updatedByUid: 'user-2',
+  }));
+  await assertSucceeds(setDoc(doc(userDb('user-1'), 'users', 'user-1', 'notification_preferences', 'default'), {
+    ownerUid: 'user-1',
+    bookingStatusEnabled: false,
+    appointmentReminderEnabled: true,
+    loyaltyEnabled: true,
+    marketingEnabled: false,
+    updatedAt: now,
+    updatedByUid: 'user-1',
+    updateSource: 'mobile-notifications',
+  }));
+
+  await assertSucceeds(getDoc(doc(userDb('user-1'), 'users', 'user-1', 'notification_tokens', 'current-test-device')));
+  await assertFails(getDoc(doc(userDb('user-2'), 'users', 'user-1', 'notification_tokens', 'current-test-device')));
+  await assertFails(getDoc(doc(staffDb(), 'users', 'user-1', 'notification_tokens', 'current-test-device')));
+  await assertFails(setDoc(doc(userDb('user-2'), 'users', 'user-1', 'notification_tokens', 'token-2'), {
+    ownerUid: 'user-1',
+    tokenId: 'token-2',
+    platform: 'android',
+    token: 'test-token-for-current-device-2222222222',
+    enabled: true,
+    createdAt: now,
+    updatedAt: now,
+  }));
+  await assertFails(setDoc(doc(userDb('user-1'), 'users', 'user-1', 'notification_tokens', 'bad-owner'), {
+    ownerUid: 'user-2',
+    tokenId: 'bad-owner',
+    platform: 'ios',
+    token: 'test-token-for-current-device-2222222222',
+    enabled: true,
+    createdAt: now,
+    updatedAt: now,
+  }));
+  await assertSucceeds(setDoc(doc(userDb('user-1'), 'users', 'user-1', 'notification_tokens', 'token-2'), {
+    ownerUid: 'user-1',
+    tokenId: 'token-2',
+    platform: 'ios',
+    token: 'test-token-for-current-device-2222222222',
+    enabled: true,
+    createdAt: now,
+    updatedAt: now,
+  }));
+  await assertSucceeds(deleteDoc(doc(userDb('user-1'), 'users', 'user-1', 'notification_tokens', 'token-2')));
 });
 
 test('public reservation create is allowed only with valid payload shape', async () => {
