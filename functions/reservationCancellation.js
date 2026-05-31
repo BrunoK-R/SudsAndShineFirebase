@@ -42,7 +42,13 @@ function isOwnedReservation(data, uid, email) {
     Boolean(email && customerEmail && customerEmail === email);
 }
 
-function assertReservationCancelable({reservationSnap, uid, email, now = new Date()}) {
+function cutoffBlocksAction(slotStart, now, cutoffMinutes) {
+  const minutes = Number.isInteger(cutoffMinutes) ? cutoffMinutes : 0;
+  if (minutes <= 0) return slotStart <= now;
+  return slotStart.getTime() - now.getTime() <= minutes * 60 * 1000;
+}
+
+function assertReservationCancelable({reservationSnap, uid, email, now = new Date(), bookingPolicy = null}) {
   if (!reservationSnap?.exists) {
     throw new HttpsError("not-found", "Reservation not found");
   }
@@ -64,7 +70,7 @@ function assertReservationCancelable({reservationSnap, uid, email, now = new Dat
   if (Number.isNaN(slotStart.getTime())) {
     throw new HttpsError("failed-precondition", "Reservation start time is invalid");
   }
-  if (slotStart <= now) {
+  if (cutoffBlocksAction(slotStart, now, bookingPolicy?.cancellationWindowMinutes)) {
     throw new HttpsError("failed-precondition", "Reservation can no longer be cancelled");
   }
 

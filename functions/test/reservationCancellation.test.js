@@ -70,6 +70,39 @@ test("assertReservationCancelable treats already cancelled owned reservations as
   assert.deepEqual(result, {alreadyCancelled: true, status: "cancelled"});
 });
 
+test("assertReservationCancelable honors configured cancellation cutoff", () => {
+  const now = new Date("2026-05-20T10:00:00.000Z");
+
+  assert.throws(() => {
+    assertReservationCancelable({
+      reservationSnap: doc({
+        customerUid: "uid-1",
+        slotStart: "2026-05-20T11:30:00.000Z",
+        status: "pending",
+      }),
+      uid: "uid-1",
+      email: "bruno@example.com",
+      now,
+      bookingPolicy: {cancellationWindowMinutes: 120},
+    });
+  }, /Reservation can no longer be cancelled/);
+
+  assert.deepEqual(
+    assertReservationCancelable({
+      reservationSnap: doc({
+        customerUid: "uid-1",
+        slotStart: "2026-05-20T12:01:00.000Z",
+        status: "pending",
+      }),
+      uid: "uid-1",
+      email: "bruno@example.com",
+      now,
+      bookingPolicy: {cancellationWindowMinutes: 120},
+    }),
+    {alreadyCancelled: false, status: "pending"},
+  );
+});
+
 test("assertReservationCancelable rejects foreign past and closed reservations", () => {
   const now = new Date("2026-05-20T10:00:00.000Z");
 

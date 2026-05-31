@@ -41,6 +41,12 @@ const {
   validateCapacityOverrideInput,
 } = require("./availabilityAdmin");
 const {
+  buildBookingPolicy,
+  buildBookingPolicySettingValue,
+  pendingExpiresAtForPolicy,
+  validateBookingPolicyUpdateInput,
+} = require("./bookingPolicyAdmin");
+const {
   buildUserReservationHistory,
 } = require("./reservationHistory");
 const {
@@ -83,7 +89,6 @@ const {
 admin.initializeApp();
 const db = admin.firestore();
 const USER_HISTORY_RESERVATION_LIMIT = 50;
-const PENDING_RESERVATION_HOLD_MS = 24 * 60 * 60 * 1000;
 
 setGlobalOptions({
   maxInstances: 10,
@@ -269,9 +274,7 @@ exports.createReservation = onCall(async (request) => {
 
   const reservationRef = db.collection("reservations").doc();
   const reservationCode = generateDeterministicReservationCode(reservationRef.id);
-  const pendingExpiresAt = admin.firestore.Timestamp.fromDate(
-    new Date(Date.now() + PENDING_RESERVATION_HOLD_MS),
-  );
+  let pendingExpiresAt = admin.firestore.Timestamp.fromDate(pendingExpiresAtForPolicy(null));
 
   if (data.userVehicleId && !authenticatedUid) {
     throw new HttpsError("unauthenticated", "Authentication required for saved vehicle reservations");
@@ -302,6 +305,7 @@ exports.createReservation = onCall(async (request) => {
       .where("key", "==", "default_max_bookings_per_slot")
       .limit(1);
     const businessInfoRef = db.collection("business_settings").doc("business_info");
+    const bookingPolicyRef = db.collection("business_settings").doc("booking_policy");
     const businessInfoQuery = db
       .collection("business_settings")
       .where("key", "==", "business_info")
@@ -324,6 +328,7 @@ exports.createReservation = onCall(async (request) => {
       defaultCapacitySnap,
       businessInfoSnap,
       keyedBusinessInfoSnap,
+      bookingPolicySnap,
       servicesSnap,
       extrasSnap,
       userVehicleSnap,
@@ -335,6 +340,7 @@ exports.createReservation = onCall(async (request) => {
       tx.get(defaultCapacityQuery),
       tx.get(businessInfoRef),
       tx.get(businessInfoQuery),
+      tx.get(bookingPolicyRef),
       tx.get(servicesQuery),
       tx.get(extrasQuery),
       userVehicleRef ? tx.get(userVehicleRef) : Promise.resolve(null),
@@ -345,6 +351,8 @@ exports.createReservation = onCall(async (request) => {
     const defaultCapacitySetting = defaultCapacitySnap.empty ? null : defaultCapacitySnap.docs[0].data();
     const capacityLimit = resolveCapacityLimit(defaultCapacitySetting, capacityOverride);
     const businessInfo = businessInfoFromSnapshots(businessInfoSnap, keyedBusinessInfoSnap);
+    const bookingPolicy = buildBookingPolicy(bookingPolicySnap);
+    pendingExpiresAt = admin.firestore.Timestamp.fromDate(pendingExpiresAtForPolicy(bookingPolicy));
     const openingHours = openingHoursForAvailability(businessInfo, businessInfoSnap, keyedBusinessInfoSnap);
     const serviceCatalog = buildServiceCatalog(servicesSnap.docs, extrasSnap.docs);
     const service = serviceCatalog.services.find((item) => item.id === data.serviceId) || null;
@@ -734,11 +742,16 @@ exports.cancelMyReservation = onCall(async (request) => {
   let finalStatus = "cancelled";
 
   await db.runTransaction(async (tx) => {
-    const reservationSnap = await tx.get(reservationRef);
+    const bookingPolicyRef = db.collection("business_settings").doc("booking_policy");
+    const [reservationSnap, bookingPolicySnap] = await Promise.all([
+      tx.get(reservationRef),
+      tx.get(bookingPolicyRef),
+    ]);
     const result = assertReservationCancelable({
       reservationSnap,
       uid,
       email,
+      bookingPolicy: buildBookingPolicy(bookingPolicySnap),
     });
 
     finalStatus = result.status;
@@ -771,13 +784,19 @@ exports.rescheduleMyReservation = onCall(async (request) => {
   let finalStatus = "pending";
 
   await db.runTransaction(async (tx) => {
-    const reservationSnap = await tx.get(reservationRef);
+    const bookingPolicyRef = db.collection("business_settings").doc("booking_policy");
+    const [reservationSnap, bookingPolicySnap] = await Promise.all([
+      tx.get(reservationRef),
+      tx.get(bookingPolicyRef),
+    ]);
+    const bookingPolicy = buildBookingPolicy(bookingPolicySnap);
     const currentReservation = assertReservationReschedulable({
       reservationSnap,
       uid,
       email,
       newSlotStart: data.slotStart,
       newSlotEnd: data.slotEnd,
+      bookingPolicy,
     });
 
     const reservationsQuery = db
@@ -852,9 +871,7 @@ exports.rescheduleMyReservation = onCall(async (request) => {
       slotEnd: data.slotEnd.toISOString(),
       date: dateKey,
       status: "pending",
-      pendingExpiresAt: admin.firestore.Timestamp.fromDate(
-        new Date(Date.now() + PENDING_RESERVATION_HOLD_MS),
-      ),
+      pendingExpiresAt: admin.firestore.Timestamp.fromDate(pendingExpiresAtForPolicy(bookingPolicy)),
       previousSlotStart: currentReservation.currentSlotStart.toISOString(),
       previousSlotEnd: currentReservation.currentSlotEnd.toISOString(),
       previousStatus: currentReservation.previousStatus,
@@ -1119,6 +1136,13 @@ exports.getAdminAvailabilityConfiguration = onCall(async (request) => {
   });
 });
 
+exports.getAdminBookingPolicy = onCall(async (request) => {
+  await assertAdminRequest(request);
+
+  const policySnap = await db.collection("business_settings").doc("booking_policy").get();
+  return buildBookingPolicy(policySnap);
+});
+
 exports.updateBusinessInfo = onCall(async (request) => {
   await assertAdminRequest(request);
   const businessInfo = validateBusinessInfoUpdateInput(request.data);
@@ -1137,6 +1161,28 @@ exports.updateBusinessInfo = onCall(async (request) => {
 
   return {
     ...businessInfo,
+    source: "firestore",
+  };
+});
+
+exports.updateBookingPolicy = onCall(async (request) => {
+  await assertAdminRequest(request);
+  const policy = validateBookingPolicyUpdateInput(request.data);
+  const value = buildBookingPolicySettingValue(policy);
+
+  await db.collection("business_settings").doc("booking_policy").set(
+    {
+      key: "booking_policy",
+      value,
+      updatedAt: admin.firestore.FieldValue.serverTimestamp(),
+      updatedByUid: request.auth.uid,
+      updateSource: "admin-mobile-booking-policy",
+    },
+    {merge: true},
+  );
+
+  return {
+    ...policy,
     source: "firestore",
   };
 });

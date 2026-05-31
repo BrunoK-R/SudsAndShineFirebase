@@ -64,7 +64,21 @@ function isOwnedReservation(data, uid, email) {
     Boolean(email && customerEmail && customerEmail === email);
 }
 
-function assertReservationReschedulable({reservationSnap, uid, email, newSlotStart, newSlotEnd, now = new Date()}) {
+function cutoffBlocksAction(slotStart, now, cutoffMinutes) {
+  const minutes = Number.isInteger(cutoffMinutes) ? cutoffMinutes : 0;
+  if (minutes <= 0) return slotStart <= now;
+  return slotStart.getTime() - now.getTime() <= minutes * 60 * 1000;
+}
+
+function assertReservationReschedulable({
+  reservationSnap,
+  uid,
+  email,
+  newSlotStart,
+  newSlotEnd,
+  now = new Date(),
+  bookingPolicy = null,
+}) {
   if (!reservationSnap?.exists) {
     throw new HttpsError("not-found", "Reservation not found");
   }
@@ -84,7 +98,7 @@ function assertReservationReschedulable({reservationSnap, uid, email, newSlotSta
   if (Number.isNaN(currentSlotStart.getTime()) || Number.isNaN(currentSlotEnd.getTime())) {
     throw new HttpsError("failed-precondition", "Reservation time is invalid");
   }
-  if (currentSlotStart <= now) {
+  if (cutoffBlocksAction(currentSlotStart, now, bookingPolicy?.rescheduleWindowMinutes)) {
     throw new HttpsError("failed-precondition", "Reservation can no longer be rescheduled");
   }
   if (newSlotStart <= now) {

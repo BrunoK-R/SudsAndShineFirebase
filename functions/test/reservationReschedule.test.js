@@ -65,6 +65,25 @@ test("assertReservationReschedulable allows owned future pending reservation wit
   assert.equal(result.currentSlotStart.toISOString(), "2026-05-21T10:00:00.000Z");
 });
 
+test("assertReservationReschedulable honors configured reschedule cutoff", () => {
+  assert.throws(() => {
+    assertReservationReschedulable({
+      reservationSnap: doc("reservation-1", {
+        customerUid: "uid-1",
+        slotStart: "2026-05-20T11:30:00.000Z",
+        slotEnd: "2026-05-20T12:15:00.000Z",
+        status: "pending",
+      }),
+      uid: "uid-1",
+      email: "bruno@example.com",
+      newSlotStart: new Date("2026-05-22T11:00:00.000Z"),
+      newSlotEnd: new Date("2026-05-22T11:45:00.000Z"),
+      now: new Date("2026-05-20T10:00:00.000Z"),
+      bookingPolicy: {rescheduleWindowMinutes: 120},
+    });
+  }, /Reservation can no longer be rescheduled/);
+});
+
 test("assertReservationReschedulable rejects foreign past closed and duration-mutating updates", () => {
   const now = new Date("2026-05-20T10:00:00.000Z");
 
