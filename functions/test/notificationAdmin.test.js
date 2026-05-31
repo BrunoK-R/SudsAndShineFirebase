@@ -19,6 +19,8 @@ test("buildNotificationSettings returns safe defaults when no settings exist", (
   assert.equal(settings.quietHoursStart, "22:00");
   assert.equal(settings.quietHoursEnd, "08:00");
   assert.deepEqual(settings.templates.map((template) => template.key), TEMPLATE_KEYS);
+  assert.equal(settings.templates.find((template) => template.key === "booking_cancelled").title, "Marcação cancelada");
+  assert.equal(settings.templates.find((template) => template.key === "booking_rescheduled").enabled, true);
   assert.equal(settings.source, "default");
 });
 
@@ -88,6 +90,23 @@ test("validateNotificationSettingsUpdateInput sanitizes admin settings", () => {
     title: "booking_request title",
     body: "booking_request body",
   });
+});
+
+test("validateNotificationSettingsUpdateInput backfills newly added templates", () => {
+  const legacyTemplateKeys = TEMPLATE_KEYS.filter((key) =>
+    key !== "booking_cancelled" && key !== "booking_rescheduled",
+  );
+  const settings = validateNotificationSettingsUpdateInput({
+    ...validPayload(),
+    templates: validPayload().templates.filter((template) => legacyTemplateKeys.includes(template.key)),
+  });
+
+  assert.equal(settings.templates.length, TEMPLATE_KEYS.length);
+  assert.equal(settings.templates.find((template) => template.key === "booking_cancelled").title, "Marcação cancelada");
+  assert.equal(
+    settings.templates.find((template) => template.key === "booking_rescheduled").body,
+    "A sua marcação foi remarcada para {{slotStart}}. Consulte os detalhes na app.",
+  );
 });
 
 test("validateNotificationSettingsUpdateInput rejects unsafe settings", () => {

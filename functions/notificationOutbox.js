@@ -7,7 +7,18 @@ const BOOKING_STATUS_TEMPLATE_KEYS = new Set([
   "booking_accepted",
   "booking_rejected",
   "booking_expired",
+  "booking_cancelled",
+  "booking_rescheduled",
 ]);
+const REVIEW_PROMPT_RESERVATION_STATUS_VALUES = [
+  "confirmed",
+  "confirmado",
+  "completed",
+  "complete",
+  "concluido",
+  "concluído",
+  "done",
+];
 
 function cleanReservationText(value, maxLength = 240) {
   if (value === undefined || value === null) return "";
@@ -54,9 +65,23 @@ function reservationVariables(reservationId, reservation) {
     serviceName: cleanReservationText(reservation.serviceName || "Servico", 160),
     slotStart: cleanReservationText(reservation.slotStart, 80),
     slotEnd: cleanReservationText(reservation.slotEnd, 80),
+    previousSlotStart: cleanReservationText(reservation.previousSlotStart, 80),
+    previousSlotEnd: cleanReservationText(reservation.previousSlotEnd, 80),
     status: cleanReservationText(reservation.status, 40),
     rejectionReason: cleanReservationText(reservation.rejectionReason, 500),
   };
+}
+
+function isReviewPromptReservationDue(reservation, now = new Date()) {
+  const customerUid = cleanReservationText(reservation?.customerUid, 128);
+  if (!customerUid) return false;
+
+  const status = cleanReservationText(reservation?.status || "pending", 40).toLowerCase();
+  if (!REVIEW_PROMPT_RESERVATION_STATUS_VALUES.includes(status)) return false;
+
+  const slotEnd = new Date(cleanReservationText(reservation?.slotEnd, 80));
+  if (Number.isNaN(slotEnd.getTime())) return false;
+  return slotEnd <= now;
 }
 
 function interpolateTemplateText(text, variables) {
@@ -91,7 +116,7 @@ function buildReservationNotificationOutboxDocument({
 
   const now = timestamp || new Date();
   return {
-    type: "booking_status",
+    type: templateKey === "review_prompt" ? "review_prompt" : "booking_status",
     templateKey,
     recipientUid,
     reservationId: normalizedReservationId,
@@ -132,6 +157,7 @@ function enqueueReservationNotification(tx, {
   notificationSettingsSnap = null,
   userPreferencesSnap = null,
   userDocSnap = null,
+  existingOutboxSnap = null,
   actorUid = "",
   timestamp = null,
 } = {}) {
@@ -151,6 +177,7 @@ function enqueueReservationNotification(tx, {
   });
 
   if (!document) return null;
+  if (existingOutboxSnap?.exists) return null;
 
   tx.set(
     db.collection(NOTIFICATION_OUTBOX_COLLECTION).doc(notificationOutboxDocId(templateKey, reservationId)),
@@ -161,7 +188,9 @@ function enqueueReservationNotification(tx, {
 
 module.exports = {
   NOTIFICATION_OUTBOX_COLLECTION,
+  REVIEW_PROMPT_RESERVATION_STATUS_VALUES,
   buildReservationNotificationOutboxDocument,
   enqueueReservationNotification,
+  isReviewPromptReservationDue,
   notificationOutboxDocId,
 };

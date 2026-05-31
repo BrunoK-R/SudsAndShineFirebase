@@ -106,7 +106,11 @@ const {
   validateUserNotificationPreferencesInput,
 } = require("./notificationPreferences");
 const {
+  NOTIFICATION_OUTBOX_COLLECTION,
+  REVIEW_PROMPT_RESERVATION_STATUS_VALUES,
   enqueueReservationNotification,
+  isReviewPromptReservationDue,
+  notificationOutboxDocId,
 } = require("./notificationOutbox");
 
 admin.initializeApp();
@@ -862,11 +866,37 @@ exports.cancelMyReservation = onCall(async (request) => {
       return;
     }
 
+    const reservationData = reservationSnap.data() || {};
+    const customerUid = String(reservationData.customerUid || "").trim();
+    const [
+      notificationSettingsSnap,
+      notificationPreferencesSnap,
+      notificationUserSnap,
+    ] = customerUid ? await Promise.all([
+      tx.get(notificationSettingsRef()),
+      tx.get(userNotificationPreferencesRef(customerUid)),
+      tx.get(userDocument(customerUid)),
+    ]) : [null, null, null];
+
     tx.update(reservationRef, {
       status: "cancelled",
       cancelledAt: admin.firestore.FieldValue.serverTimestamp(),
       cancelledByUid: uid,
       updatedAt: admin.firestore.FieldValue.serverTimestamp(),
+    });
+    enqueueReservationNotification(tx, {
+      db,
+      templateKey: "booking_cancelled",
+      reservationId,
+      reservation: {
+        ...reservationData,
+        status: "cancelled",
+      },
+      notificationSettingsSnap,
+      userPreferencesSnap: notificationPreferencesSnap,
+      userDocSnap: notificationUserSnap,
+      actorUid: uid,
+      timestamp: admin.firestore.FieldValue.serverTimestamp(),
     });
     finalStatus = "cancelled";
   });
@@ -901,6 +931,8 @@ exports.rescheduleMyReservation = onCall(async (request) => {
       newSlotEnd: data.slotEnd,
       bookingPolicy,
     });
+    const reservationData = reservationSnap.data() || {};
+    const customerUid = String(reservationData.customerUid || "").trim();
 
     const reservationsQuery = db
       .collection("reservations")
@@ -928,6 +960,9 @@ exports.rescheduleMyReservation = onCall(async (request) => {
       defaultCapacitySnap,
       businessInfoSnap,
       keyedBusinessInfoSnap,
+      notificationSettingsSnap,
+      notificationPreferencesSnap,
+      notificationUserSnap,
     ] = await Promise.all([
       tx.get(reservationsQuery),
       tx.get(blockedQuery),
@@ -935,6 +970,9 @@ exports.rescheduleMyReservation = onCall(async (request) => {
       tx.get(defaultCapacityQuery),
       tx.get(businessInfoRef),
       tx.get(businessInfoQuery),
+      customerUid ? tx.get(notificationSettingsRef()) : Promise.resolve(null),
+      customerUid ? tx.get(userNotificationPreferencesRef(customerUid)) : Promise.resolve(null),
+      customerUid ? tx.get(userDocument(customerUid)) : Promise.resolve(null),
     ]);
 
     const capacityOverride = capacityOverrideSnap.empty ? null : capacityOverrideSnap.docs[0].data();
@@ -982,6 +1020,27 @@ exports.rescheduleMyReservation = onCall(async (request) => {
       rescheduledByUid: uid,
       rescheduleCount: admin.firestore.FieldValue.increment(1),
       updatedAt: admin.firestore.FieldValue.serverTimestamp(),
+    });
+    enqueueReservationNotification(tx, {
+      db,
+      templateKey: "booking_rescheduled",
+      reservationId: data.reservationId,
+      reservation: {
+        ...reservationData,
+        slotStart: data.slotStart.toISOString(),
+        slotEnd: data.slotEnd.toISOString(),
+        date: dateKey,
+        status: "pending",
+        pendingExpiresAt: admin.firestore.Timestamp.fromDate(pendingExpiresAtForPolicy(bookingPolicy)),
+        previousSlotStart: currentReservation.currentSlotStart.toISOString(),
+        previousSlotEnd: currentReservation.currentSlotEnd.toISOString(),
+        previousStatus: currentReservation.previousStatus,
+      },
+      notificationSettingsSnap,
+      userPreferencesSnap: notificationPreferencesSnap,
+      userDocSnap: notificationUserSnap,
+      actorUid: uid,
+      timestamp: admin.firestore.FieldValue.serverTimestamp(),
     });
     finalStatus = "pending";
   });
@@ -1911,6 +1970,65 @@ exports.expirePendingReservations = onSchedule("every 60 minutes", async () => {
   }
 
   logger.info("Expired pending reservations", {expiredCount});
+});
+
+exports.queueReviewPromptNotifications = onSchedule("every 60 minutes", async () => {
+  const now = new Date();
+  const completedSnap = await db.collection("reservations")
+    .where("status", "in", REVIEW_PROMPT_RESERVATION_STATUS_VALUES)
+    .limit(250)
+    .get();
+  let queuedCount = 0;
+
+  for (const docSnap of completedSnap.docs) {
+    if (!isReviewPromptReservationDue(docSnap.data(), now)) continue;
+
+    const queued = await db.runTransaction(async (tx) => {
+      const freshSnap = await tx.get(docSnap.ref);
+      const reservationData = freshSnap.data() || {};
+      if (!freshSnap.exists || !isReviewPromptReservationDue(reservationData, now)) return false;
+
+      const customerUid = String(reservationData.customerUid || "").trim();
+      const reviewRef = db
+        .collection("reservation_reviews")
+        .doc(buildReservationReviewId(docSnap.id, customerUid));
+      const outboxRef = db
+        .collection(NOTIFICATION_OUTBOX_COLLECTION)
+        .doc(notificationOutboxDocId("review_prompt", docSnap.id));
+      const [
+        reviewSnap,
+        existingOutboxSnap,
+        notificationSettingsSnap,
+        notificationPreferencesSnap,
+        notificationUserSnap,
+      ] = await Promise.all([
+        tx.get(reviewRef),
+        tx.get(outboxRef),
+        tx.get(notificationSettingsRef()),
+        tx.get(userNotificationPreferencesRef(customerUid)),
+        tx.get(userDocument(customerUid)),
+      ]);
+
+      if (reviewSnap.exists || existingOutboxSnap.exists) return false;
+
+      return Boolean(enqueueReservationNotification(tx, {
+        db,
+        templateKey: "review_prompt",
+        reservationId: docSnap.id,
+        reservation: reservationData,
+        notificationSettingsSnap,
+        userPreferencesSnap: notificationPreferencesSnap,
+        userDocSnap: notificationUserSnap,
+        existingOutboxSnap,
+        actorUid: "system",
+        timestamp: admin.firestore.FieldValue.serverTimestamp(),
+      }));
+    });
+
+    if (queued) queuedCount += 1;
+  }
+
+  logger.info("Queued review prompt notifications", {queuedCount});
 });
 
 exports.health = onRequest((req, res) => {

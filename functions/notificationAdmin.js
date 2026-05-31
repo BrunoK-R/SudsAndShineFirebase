@@ -5,9 +5,15 @@ const TEMPLATE_KEYS = [
   "booking_accepted",
   "booking_rejected",
   "booking_expired",
+  "booking_cancelled",
+  "booking_rescheduled",
   "booking_reminder",
   "review_prompt",
 ];
+const BACKWARD_COMPATIBLE_TEMPLATE_KEYS = new Set([
+  "booking_cancelled",
+  "booking_rescheduled",
+]);
 
 const DEFAULT_NOTIFICATION_TEMPLATES = [
   {
@@ -37,6 +43,20 @@ const DEFAULT_NOTIFICATION_TEMPLATES = [
     enabled: true,
     title: "Pedido de marcação expirado",
     body: "O pedido expirou antes da confirmação. Pode escolher outro horário na app.",
+  },
+  {
+    key: "booking_cancelled",
+    label: "Marcação cancelada",
+    enabled: true,
+    title: "Marcação cancelada",
+    body: "A sua marcação foi cancelada. Pode escolher outro horário na app.",
+  },
+  {
+    key: "booking_rescheduled",
+    label: "Marcação remarcada",
+    enabled: true,
+    title: "Marcação remarcada",
+    body: "A sua marcação foi remarcada para {{slotStart}}. Consulte os detalhes na app.",
   },
   {
     key: "booking_reminder",
@@ -211,7 +231,10 @@ function validateNotificationSettingsUpdateInput(data = {}) {
   }
 
   const rawTemplates = templatesByKey(data.templates);
-  if (rawTemplates.size !== TEMPLATE_KEYS.length) {
+  const hasRequiredTemplates = TEMPLATE_KEYS.every((key) =>
+    rawTemplates.has(key) || BACKWARD_COMPATIBLE_TEMPLATE_KEYS.has(key),
+  );
+  if (!hasRequiredTemplates) {
     throw new HttpsError("invalid-argument", "All notification templates are required");
   }
 
@@ -224,7 +247,11 @@ function validateNotificationSettingsUpdateInput(data = {}) {
     reminderLeadMinutes: requiredReminderLeadMinutes(data.reminderLeadMinutes),
     quietHoursStart: requiredQuietHour(data.quietHoursStart, "quietHoursStart"),
     quietHoursEnd: requiredQuietHour(data.quietHoursEnd, "quietHoursEnd"),
-    templates: TEMPLATE_KEYS.map((key) => validateTemplate(rawTemplates.get(key), key)),
+    templates: TEMPLATE_KEYS.map((key) =>
+      rawTemplates.has(key) ?
+        validateTemplate(rawTemplates.get(key), key) :
+        buildTemplate(null, key),
+    ),
   };
 }
 
