@@ -92,6 +92,11 @@ const {
   loyaltyDiscountCentsForRedemption,
   validateLoyaltySettingsUpdateInput,
 } = require("./loyaltyAdmin");
+const {
+  buildNotificationSettings,
+  buildNotificationSettingsValue,
+  validateNotificationSettingsUpdateInput,
+} = require("./notificationAdmin");
 
 admin.initializeApp();
 const db = admin.firestore();
@@ -163,6 +168,10 @@ function loyaltySettingsRef() {
 
 function legacyLoyaltySettingsRef() {
   return db.collection("business_settings").doc("loyalty_settings");
+}
+
+function notificationSettingsRef() {
+  return db.collection("admin_settings").doc("notification_settings");
 }
 
 function selectedLoyaltySettingsSnapshot(primarySnap, legacySnap) {
@@ -1206,6 +1215,13 @@ exports.getAdminLoyaltySettings = onCall(async (request) => {
   return buildLoyaltySettings(selectedLoyaltySettingsSnapshot(settingsSnap, legacySettingsSnap));
 });
 
+exports.getAdminNotificationSettings = onCall(async (request) => {
+  await assertAdminRequest(request);
+
+  const settingsSnap = await notificationSettingsRef().get();
+  return buildNotificationSettings(settingsSnap);
+});
+
 exports.updateBusinessInfo = onCall(async (request) => {
   await assertAdminRequest(request);
   const businessInfo = validateBusinessInfoUpdateInput(request.data);
@@ -1262,6 +1278,28 @@ exports.updateLoyaltySettings = onCall(async (request) => {
       updatedAt: admin.firestore.FieldValue.serverTimestamp(),
       updatedByUid: request.auth.uid,
       updateSource: "admin-mobile-loyalty",
+    },
+    {merge: true},
+  );
+
+  return {
+    ...settings,
+    source: "firestore",
+  };
+});
+
+exports.updateNotificationSettings = onCall(async (request) => {
+  await assertAdminRequest(request);
+  const settings = validateNotificationSettingsUpdateInput(request.data);
+  const value = buildNotificationSettingsValue(settings);
+
+  await notificationSettingsRef().set(
+    {
+      key: "notification_settings",
+      value,
+      updatedAt: admin.firestore.FieldValue.serverTimestamp(),
+      updatedByUid: request.auth.uid,
+      updateSource: "admin-mobile-notifications",
     },
     {merge: true},
   );

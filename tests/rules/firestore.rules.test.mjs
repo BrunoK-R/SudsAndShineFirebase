@@ -130,15 +130,34 @@ test('admin settings are hidden from non-admin direct clients', async () => {
       rewardValue: 1500,
     },
   });
+  await seedDoc('admin_settings', 'notification_settings', {
+    value: {
+      bookingStatusEnabled: true,
+      appointmentReminderEnabled: true,
+      loyaltyEnabled: true,
+      adminPendingAlertEnabled: true,
+      marketingEnabled: false,
+      reminderLeadMinutes: 120,
+    },
+  });
 
   await assertFails(getDoc(doc(unauthDb(), 'admin_settings', 'loyalty_settings')));
+  await assertFails(getDoc(doc(unauthDb(), 'admin_settings', 'notification_settings')));
   await assertFails(getDoc(doc(staffDb(), 'admin_settings', 'loyalty_settings')));
+  await assertFails(getDoc(doc(staffDb(), 'admin_settings', 'notification_settings')));
   await assertFails(setDoc(doc(staffDb(), 'admin_settings', 'loyalty_settings'), {
     value: {stampsRequired: 1},
   }));
+  await assertFails(setDoc(doc(staffDb(), 'admin_settings', 'notification_settings'), {
+    value: {bookingStatusEnabled: false},
+  }));
   await assertSucceeds(getDoc(doc(adminDb(), 'admin_settings', 'loyalty_settings')));
+  await assertSucceeds(getDoc(doc(adminDb(), 'admin_settings', 'notification_settings')));
   await assertSucceeds(setDoc(doc(adminDb(), 'admin_settings', 'loyalty_settings'), {
     value: {stampsRequired: 8},
+  }));
+  await assertSucceeds(setDoc(doc(adminDb(), 'admin_settings', 'notification_settings'), {
+    value: {bookingStatusEnabled: true},
   }));
 });
 
