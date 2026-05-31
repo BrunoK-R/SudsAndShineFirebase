@@ -4,7 +4,9 @@ const {
   DEFAULT_EXTRAS,
   DEFAULT_SERVICES,
   buildAdminServiceCatalog,
+  buildAdminServiceExtras,
   buildServiceCatalog,
+  normalizeAdminExtraDocument,
   normalizeAdminServiceDocument,
   normalizeExtraDocument,
   normalizeServiceDocument,
@@ -12,6 +14,8 @@ const {
   parsePriceCents,
   validateAdminServiceCatalogArchiveInput,
   validateAdminServiceCatalogItemInput,
+  validateAdminServiceExtraArchiveInput,
+  validateAdminServiceExtraInput,
 } = require("../serviceCatalog");
 
 function doc(id, data) {
@@ -210,6 +214,77 @@ test("buildServiceCatalog sorts active extras and omits inactive extras", () => 
   assert.equal(catalog.extras[0].sortOrder, undefined);
 });
 
+test("buildServiceCatalog omits disabled extra documents", () => {
+  const catalog = buildServiceCatalog(
+    [],
+    [
+      doc("disabled", {
+        name: "Disabled",
+        enabled: false,
+        priceCents: 1000,
+        sortOrder: 1,
+      }),
+      doc("enabled", {
+        name: "Enabled",
+        enabled: true,
+        priceCents: 1200,
+        sortOrder: 2,
+      }),
+    ],
+  );
+
+  assert.deepEqual(catalog.extras.map((extra) => extra.id), ["enabled"]);
+});
+
+test("buildAdminServiceExtras includes inactive extras with admin metadata", () => {
+  const inactive = normalizeAdminExtraDocument("wax", {
+    title: " Enceramento ",
+    subtitle: " Proteção extra ",
+    price: "15,00€",
+    icon: "shield",
+    serviceIds: ["premium", "standard"],
+    enabled: false,
+    sortOrder: "3",
+  });
+
+  assert.equal(inactive.id, "wax");
+  assert.equal(inactive.name, "Enceramento");
+  assert.equal(inactive.priceCents, 1500);
+  assert.equal(inactive.active, false);
+  assert.deepEqual(inactive.eligibleServiceIds, ["premium", "standard"]);
+
+  const catalog = buildAdminServiceExtras([
+    doc("odor", {
+      name: "Tratamento de Odores",
+      priceCents: 1200,
+      enabled: true,
+      sortOrder: 2,
+    }),
+    doc("wax", {
+      name: "Enceramento",
+      priceCents: 1500,
+      enabled: false,
+      sortOrder: 1,
+    }),
+  ]);
+
+  assert.equal(catalog.source, "firestore");
+  assert.deepEqual(catalog.extras.map((extra) => extra.id), ["wax", "odor"]);
+  assert.equal(catalog.extras[0].active, false);
+  assert.equal(catalog.extras[0].sortOrder, 1);
+});
+
+test("buildAdminServiceExtras falls back to default active extras", () => {
+  const catalog = buildAdminServiceExtras([]);
+
+  assert.equal(catalog.source, "default");
+  assert.deepEqual(
+    catalog.extras.map((extra) => extra.id),
+    DEFAULT_EXTRAS.map((extra) => extra.id),
+  );
+  assert.equal(catalog.extras.every((extra) => extra.active), true);
+});
+
 test("catalog parsers coerce duration and euro prices", () => {
   assert.equal(parseDurationMinutes("480 min"), 480);
   assert.equal(parseDurationMinutes("999 min"), 480);
@@ -273,6 +348,63 @@ test("validates admin service archive payloads", () => {
   );
   assert.throws(
     () => validateAdminServiceCatalogArchiveInput({serviceId: "services/standard"}),
+    /path separators/,
+  );
+});
+
+test("validates and sanitizes admin service extra payloads", () => {
+  const parsed = validateAdminServiceExtraInput({
+    extraId: " wax ",
+    name: " Enceramento   Premium ",
+    description: " Proteção   extra ",
+    price: "15,00€",
+    iconKey: " shield ",
+    eligibleServiceIds: [" premium ", "standard", "premium"],
+    enabled: false,
+    sortOrder: -4,
+  });
+
+  assert.equal(parsed.extraId, "wax");
+  assert.deepEqual(parsed.document, {
+    id: "wax",
+    name: "Enceramento Premium",
+    description: "Proteção extra",
+    priceCents: 1500,
+    iconKey: "shield",
+    eligibleServiceIds: ["premium", "standard"],
+    active: false,
+    enabled: false,
+    sortOrder: 0,
+  });
+});
+
+test("admin service extra validation rejects path ids and malformed service links", () => {
+  assert.throws(
+    () => validateAdminServiceExtraInput({
+      extraId: "extras/wax",
+      name: "Wax",
+      priceCents: 1500,
+    }),
+    /path separators/,
+  );
+  assert.throws(
+    () => validateAdminServiceExtraInput({
+      extraId: "wax",
+      name: "Wax",
+      priceCents: 1500,
+      eligibleServiceIds: ["services/premium"],
+    }),
+    /path separators/,
+  );
+});
+
+test("validates admin service extra archive payloads", () => {
+  assert.deepEqual(
+    validateAdminServiceExtraArchiveInput({extraId: "wax"}),
+    {extraId: "wax"},
+  );
+  assert.throws(
+    () => validateAdminServiceExtraArchiveInput({extraId: "service_extras/wax"}),
     /path separators/,
   );
 });

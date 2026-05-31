@@ -72,13 +72,27 @@ test("resolveSelectedExtras returns catalog-priced line items in request order",
   const selected = resolveSelectedExtras(["vacuum", "wax"], [
     {id: "wax", name: "Enceramento", priceCents: 1500},
     {id: "vacuum", name: "Aspiração Profunda", priceCents: 800},
-  ]);
+  ], "premium");
 
   assert.deepEqual(selected, [
     {id: "vacuum", name: "Aspiração Profunda", priceCents: 800},
     {id: "wax", name: "Enceramento", priceCents: 1500},
   ]);
   assert.equal(totalSelectedExtrasPriceCents(selected), 2300);
+});
+
+test("resolveSelectedExtras rejects extras that are not eligible for the service", () => {
+  assert.throws(
+    () => resolveSelectedExtras(["wax"], [
+      {
+        id: "wax",
+        name: "Enceramento",
+        priceCents: 1500,
+        eligibleServiceIds: ["premium"],
+      },
+    ], "standard"),
+    /não está disponível para este serviço/,
+  );
 });
 
 test("validateCreateReservationInput rejects invalid slot ranges", () => {

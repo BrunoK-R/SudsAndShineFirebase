@@ -92,6 +92,10 @@ service cloud.firestore {
       allow write: if isAdmin();
     }
 
+    match /service_extras/{docId} {
+      allow read, write: if isAdmin();
+    }
+
     match /portfolio_items/{docId} {
       allow read: if true;
       allow write: if isStaff();

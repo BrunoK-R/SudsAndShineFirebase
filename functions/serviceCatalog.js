@@ -200,7 +200,7 @@ function normalizeAdminServiceDocument(docId, data) {
 
 function normalizeExtraDocument(docId, data) {
   if (!data || typeof data !== "object") return null;
-  if (data.active === false) return null;
+  if (data.active === false || data.enabled === false) return null;
 
   const id = String(data.id || docId || "").trim();
   const name = String(data.name || data.title || "").trim();
@@ -212,8 +212,43 @@ function normalizeExtraDocument(docId, data) {
     description: String(data.description || data.subtitle || "").trim(),
     priceCents: parsePriceCents(data.priceCents ?? data.price, 0),
     iconKey: String(data.iconKey || data.icon || "auto_awesome").trim() || "auto_awesome",
+    eligibleServiceIds: normalizePublicEligibleServiceIds(data.eligibleServiceIds || data.serviceIds),
     sortOrder: Number.isFinite(Number(data.sortOrder)) ? Number(data.sortOrder) : 999,
   };
+}
+
+function normalizeAdminExtraDocument(docId, data) {
+  if (!data || typeof data !== "object") return null;
+
+  const id = String(data.id || docId || "").trim();
+  const name = String(data.name || data.title || "").trim();
+  if (!id || !name) return null;
+  const active = data.active === false || data.enabled === false ? false : true;
+
+  return {
+    id,
+    name,
+    description: String(data.description || data.subtitle || "").trim(),
+    priceCents: parsePriceCents(data.priceCents ?? data.price, 0),
+    iconKey: String(data.iconKey || data.icon || "auto_awesome").trim() || "auto_awesome",
+    eligibleServiceIds: normalizePublicEligibleServiceIds(data.eligibleServiceIds || data.serviceIds),
+    active,
+    sortOrder: Number.isFinite(Number(data.sortOrder)) ? Number(data.sortOrder) : 999,
+  };
+}
+
+function normalizePublicEligibleServiceIds(value) {
+  if (!Array.isArray(value)) return [];
+  const ids = [];
+  const seen = new Set();
+  for (const raw of value) {
+    const id = String(raw || "").trim();
+    if (!id || id.includes("/") || id.includes("\\") || !/^[A-Za-z0-9_-]{1,80}$/.test(id)) continue;
+    if (seen.has(id)) continue;
+    seen.add(id);
+    ids.push(id);
+  }
+  return ids.slice(0, 40);
 }
 
 function normalizeSortedDocs(docs, normalize) {
@@ -246,6 +281,32 @@ function buildAdminServiceCatalog(serviceDocs = []) {
   return {
     services: DEFAULT_SERVICES.map((service) => ({
       ...service,
+      active: true,
+    })),
+    source: "default",
+  };
+}
+
+function buildAdminServiceExtras(extraDocs = []) {
+  const extras = (extraDocs || [])
+    .map((doc) => normalizeAdminExtraDocument(doc.id, doc.data()))
+    .filter(Boolean)
+    .sort((left, right) => {
+      if (left.sortOrder !== right.sortOrder) return left.sortOrder - right.sortOrder;
+      return left.name.localeCompare(right.name, "pt");
+    });
+
+  if (extras.length > 0) {
+    return {
+      extras,
+      source: "firestore",
+    };
+  }
+
+  return {
+    extras: DEFAULT_EXTRAS.map((extra) => ({
+      ...extra,
+      eligibleServiceIds: [],
       active: true,
     })),
     source: "default",
@@ -348,6 +409,26 @@ function normalizeAdminBoolean(value, fieldName, fallback = false) {
   return value;
 }
 
+function normalizeAdminEligibleServiceIds(value) {
+  if (value === undefined || value === null) return [];
+  if (!Array.isArray(value)) {
+    throw new HttpsError("invalid-argument", "eligibleServiceIds must be an array");
+  }
+  if (value.length > 40) {
+    throw new HttpsError("invalid-argument", "eligibleServiceIds supports at most 40 services");
+  }
+
+  const ids = [];
+  const seen = new Set();
+  for (const rawId of value) {
+    const id = normalizeAdminCatalogId(rawId, "eligibleServiceIds");
+    if (seen.has(id)) continue;
+    seen.add(id);
+    ids.push(id);
+  }
+  return ids;
+}
+
 function validateAdminServiceCatalogItemInput(data = {}, fallbackId = "") {
   assertPlainObject(data, "service payload");
   const serviceId = normalizeAdminCatalogId(data.serviceId ?? data.id, "serviceId", fallbackId);
@@ -404,12 +485,55 @@ function validateAdminServiceCatalogArchiveInput(data = {}) {
   };
 }
 
+function validateAdminServiceExtraInput(data = {}, fallbackId = "") {
+  assertPlainObject(data, "extra payload");
+  const extraId = normalizeAdminCatalogId(data.extraId ?? data.id, "extraId", fallbackId);
+  const name = normalizeAdminText(data.name, "name", {required: true, maxLength: 120});
+  const description = normalizeAdminText(data.description, "description", {maxLength: 1000});
+  const priceCents = normalizeAdminPriceCents(data.priceCents ?? data.price, "priceCents");
+  const iconKey = normalizeAdminText(data.iconKey ?? data.icon, "iconKey", {
+    maxLength: 40,
+    fallback: "auto_awesome",
+  }) || "auto_awesome";
+  const eligibleServiceIds = normalizeAdminEligibleServiceIds(data.eligibleServiceIds ?? data.serviceIds);
+  const active = normalizeAdminBoolean(data.active ?? data.enabled, "active", true);
+  const sortOrder = normalizeAdminInteger(data.sortOrder, "sortOrder", {
+    min: 0,
+    max: 9999,
+    fallback: 999,
+  });
+
+  return {
+    extraId,
+    document: {
+      id: extraId,
+      name,
+      description,
+      priceCents,
+      iconKey,
+      eligibleServiceIds,
+      active,
+      enabled: active,
+      sortOrder,
+    },
+  };
+}
+
+function validateAdminServiceExtraArchiveInput(data = {}) {
+  assertPlainObject(data, "archive payload");
+  return {
+    extraId: normalizeAdminCatalogId(data.extraId ?? data.id, "extraId"),
+  };
+}
+
 module.exports = {
   DEFAULT_EXTRAS,
   DEFAULT_SERVICES,
   assertCatalogReadable,
   buildAdminServiceCatalog,
+  buildAdminServiceExtras,
   buildServiceCatalog,
+  normalizeAdminExtraDocument,
   normalizeAdminServiceDocument,
   normalizeExtraDocument,
   normalizeServiceDocument,
@@ -417,4 +541,6 @@ module.exports = {
   parsePriceCents,
   validateAdminServiceCatalogArchiveInput,
   validateAdminServiceCatalogItemInput,
+  validateAdminServiceExtraArchiveInput,
+  validateAdminServiceExtraInput,
 };

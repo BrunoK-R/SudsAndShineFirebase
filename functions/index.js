@@ -20,9 +20,12 @@ const {
 const {
   assertCatalogReadable,
   buildAdminServiceCatalog,
+  buildAdminServiceExtras,
   buildServiceCatalog,
   validateAdminServiceCatalogArchiveInput,
   validateAdminServiceCatalogItemInput,
+  validateAdminServiceExtraArchiveInput,
+  validateAdminServiceExtraInput,
 } = require("./serviceCatalog");
 const {
   assertBusinessInfoReadable,
@@ -339,7 +342,7 @@ exports.createReservation = onCall(async (request) => {
     const serviceCatalog = buildServiceCatalog(servicesSnap.docs, extrasSnap.docs);
     const service = serviceCatalog.services.find((item) => item.id === data.serviceId) || null;
     const basePriceCents = priceCentsForService(service, data.vehicleType);
-    const selectedExtras = resolveSelectedExtras(data.extraIds, serviceCatalog.extras);
+    const selectedExtras = resolveSelectedExtras(data.extraIds, serviceCatalog.extras, service.id);
     const extrasPriceCents = totalSelectedExtrasPriceCents(selectedExtras);
     const subtotalPriceCents = basePriceCents === null ? null : basePriceCents + extrasPriceCents;
     let priceCents = subtotalPriceCents;
@@ -1078,6 +1081,13 @@ exports.getAdminServiceCatalog = onCall(async (request) => {
   return buildAdminServiceCatalog(servicesSnap.docs);
 });
 
+exports.getAdminServiceExtras = onCall(async (request) => {
+  await assertAdminRequest(request);
+
+  const extrasSnap = await db.collection("service_extras").get();
+  return buildAdminServiceExtras(extrasSnap.docs);
+});
+
 exports.updateBusinessInfo = onCall(async (request) => {
   await assertAdminRequest(request);
   const businessInfo = validateBusinessInfoUpdateInput(request.data);
@@ -1161,6 +1171,71 @@ exports.archiveServiceCatalogItem = onCall(async (request) => {
   return {
     ok: true,
     serviceId: data.serviceId,
+    status: "archived",
+  };
+});
+
+exports.upsertServiceExtra = onCall(async (request) => {
+  await assertAdminRequest(request);
+  const extraCollection = db.collection("service_extras");
+  const fallbackExtraRef = extraCollection.doc();
+  const data = validateAdminServiceExtraInput(request.data, fallbackExtraRef.id);
+  const extraRef = extraCollection.doc(data.extraId);
+  let created = false;
+
+  await db.runTransaction(async (tx) => {
+    const extraSnap = await tx.get(extraRef);
+    created = !extraSnap.exists;
+    const update = {
+      ...data.document,
+      updatedAt: admin.firestore.FieldValue.serverTimestamp(),
+      updatedByUid: request.auth.uid,
+    };
+
+    if (created) {
+      update.createdAt = admin.firestore.FieldValue.serverTimestamp();
+      update.createdByUid = request.auth.uid;
+    }
+    if (data.document.active) {
+      update.archivedAt = admin.firestore.FieldValue.delete();
+      update.archivedByUid = admin.firestore.FieldValue.delete();
+    }
+
+    tx.set(extraRef, update, {merge: true});
+  });
+
+  return {
+    ok: true,
+    extraId: data.extraId,
+    status: data.document.active ? "active" : "inactive",
+    created,
+  };
+});
+
+exports.archiveServiceExtra = onCall(async (request) => {
+  await assertAdminRequest(request);
+  const data = validateAdminServiceExtraArchiveInput(request.data);
+  const extraRef = db.collection("service_extras").doc(data.extraId);
+
+  await db.runTransaction(async (tx) => {
+    const extraSnap = await tx.get(extraRef);
+    if (!extraSnap.exists) {
+      throw new HttpsError("not-found", "Service extra not found");
+    }
+
+    tx.update(extraRef, {
+      active: false,
+      enabled: false,
+      archivedAt: admin.firestore.FieldValue.serverTimestamp(),
+      archivedByUid: request.auth.uid,
+      updatedAt: admin.firestore.FieldValue.serverTimestamp(),
+      updatedByUid: request.auth.uid,
+    });
+  });
+
+  return {
+    ok: true,
+    extraId: data.extraId,
     status: "archived",
   };
 });

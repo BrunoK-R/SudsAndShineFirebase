@@ -670,7 +670,7 @@ function validateCreateReservationInput(rawData) {
   };
 }
 
-function resolveSelectedExtras(extraIds, catalogExtras) {
+function resolveSelectedExtras(extraIds, catalogExtras, serviceId = "") {
   if (!extraIds || extraIds.length === 0) return [];
 
   const extrasById = new Map((catalogExtras || []).map((extra) => [extra.id, extra]));
@@ -678,6 +678,10 @@ function resolveSelectedExtras(extraIds, catalogExtras) {
     const extra = extrasById.get(extraId);
     if (!extra) {
       throw new HttpsError("invalid-argument", "Um dos extras selecionados já não está disponível.");
+    }
+    const eligibleServiceIds = Array.isArray(extra.eligibleServiceIds) ? extra.eligibleServiceIds : [];
+    if (eligibleServiceIds.length > 0 && !eligibleServiceIds.includes(serviceId)) {
+      throw new HttpsError("invalid-argument", "Um dos extras selecionados não está disponível para este serviço.");
     }
     return {
       id: extra.id,

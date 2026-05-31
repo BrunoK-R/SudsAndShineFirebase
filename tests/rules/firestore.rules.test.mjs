@@ -89,6 +89,16 @@ test('public can read services but cannot write them', async () => {
   await assertSucceeds(setDoc(doc(adminDb(), 'services', 'admin-service'), {name: 'Admin service'}));
 });
 
+test('service extras are admin-only for direct clients', async () => {
+  await seedDoc('service_extras', 'wax', {name: 'Enceramento', active: true});
+
+  await assertFails(getDoc(doc(unauthDb(), 'service_extras', 'wax')));
+  await assertFails(setDoc(doc(unauthDb(), 'service_extras', 'new-extra'), {name: 'Hack'}));
+  await assertFails(setDoc(doc(staffDb(), 'service_extras', 'staff-extra'), {name: 'Staff overwrite'}));
+  await assertSucceeds(getDoc(doc(adminDb(), 'service_extras', 'wax')));
+  await assertSucceeds(setDoc(doc(adminDb(), 'service_extras', 'admin-extra'), {name: 'Admin extra'}));
+});
+
 test('employee can write portfolio while public cannot', async () => {
   await seedDoc('portfolio_items', 'seed-item', {title: 'Antes/Depois', tags: ['Interior']});
 
