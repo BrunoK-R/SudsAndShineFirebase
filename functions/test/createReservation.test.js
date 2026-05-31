@@ -9,7 +9,9 @@ const {
   generateDeterministicReservationCode,
   hasBlockedSlotOverlap,
   isSlotWithinOperatingHours,
+  isExpiredPendingReservation,
   normalizeExtraIds,
+  reservationHoldsCapacity,
   resolveSelectedExtras,
   resolveCapacityLimit,
   resolveAvailabilityRequest,
@@ -142,6 +144,39 @@ test("active statuses include firebase and legacy values for migration compatibi
     "confirmado",
     "em_execucao",
   ]);
+});
+
+test("pending reservations hold capacity until their expiry window passes", () => {
+  const now = new Date("2026-05-20T10:00:00.000Z");
+
+  assert.equal(
+    reservationHoldsCapacity({
+      status: "pending",
+      pendingExpiresAt: "2026-05-20T10:01:00.000Z",
+    }, now),
+    true,
+  );
+  assert.equal(
+    reservationHoldsCapacity({
+      status: "pending",
+      pendingExpiresAt: "2026-05-20T09:59:59.000Z",
+    }, now),
+    false,
+  );
+  assert.equal(
+    reservationHoldsCapacity({
+      status: "confirmed",
+      pendingExpiresAt: "2026-05-20T09:59:59.000Z",
+    }, now),
+    true,
+  );
+  assert.equal(
+    isExpiredPendingReservation({
+      status: "novo",
+      pendingExpiresAt: {toDate: () => new Date("2026-05-20T09:59:59.000Z")},
+    }, now),
+    true,
+  );
 });
 
 test("resolveAvailabilityRequest returns current month window with validated duration", () => {

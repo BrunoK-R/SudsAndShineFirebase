@@ -217,3 +217,40 @@ test("buildUserReservationHistory exposes reservation change audit metadata", ()
   const cancelled = history.reservations.find((item) => item.id === "reservation-2");
   assert.equal(cancelled.cancelledAt, "2026-05-17T16:30:00.000Z");
 });
+
+test("buildUserReservationHistory exposes validation outcomes for owners", () => {
+  const history = buildUserReservationHistory({
+    now: new Date("2026-05-20T12:00:00.000Z"),
+    serviceDocs: [],
+    reservationDocs: [
+      doc("rejected-1", {
+        reservationCode: "SS-REJECT",
+        serviceId: "standard",
+        slotStart: "2026-05-22T11:00:00.000Z",
+        slotEnd: "2026-05-22T11:30:00.000Z",
+        status: "rejected",
+        vehicleType: "passageiros",
+        rejectedAt: "2026-05-20T10:00:00.000Z",
+        rejectionReason: "Horário indisponível.",
+      }),
+      doc("expired-1", {
+        reservationCode: "SS-EXPIRE",
+        serviceId: "standard",
+        slotStart: "2026-05-23T11:00:00.000Z",
+        slotEnd: "2026-05-23T11:30:00.000Z",
+        status: "expired",
+        vehicleType: "passageiros",
+        pendingExpiresAt: "2026-05-21T09:00:00.000Z",
+      }),
+    ],
+  });
+
+  const rejected = history.reservations.find((item) => item.id === "rejected-1");
+  assert.equal(rejected.upcoming, false);
+  assert.equal(rejected.rejectedAt, "2026-05-20T10:00:00.000Z");
+  assert.equal(rejected.rejectionReason, "Horário indisponível.");
+
+  const expired = history.reservations.find((item) => item.id === "expired-1");
+  assert.equal(expired.upcoming, false);
+  assert.equal(expired.pendingExpiresAt, "2026-05-21T09:00:00.000Z");
+});

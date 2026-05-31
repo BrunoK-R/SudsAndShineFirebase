@@ -10,6 +10,10 @@ const ACTIVE_RESERVATION_STATUS_VALUES = [
   "confirmado",
   "em_execucao",
 ];
+const PENDING_RESERVATION_STATUS_VALUES = [
+  "pending",
+  "novo",
+];
 const MONTH_NAMES_PT = [
   "janeiro",
   "fevereiro",
@@ -264,6 +268,51 @@ function normalizeComparableText(value) {
     .toLowerCase();
 }
 
+function normalizeReservationStatus(value) {
+  return String(value || "pending")
+    .trim()
+    .toLowerCase()
+    .replace(/[-\s]+/g, "_");
+}
+
+function timestampToMillis(value) {
+  if (!value) return null;
+  if (value instanceof Date) return Number.isNaN(value.getTime()) ? null : value.getTime();
+  if (typeof value === "string") {
+    const parsed = new Date(value);
+    return Number.isNaN(parsed.getTime()) ? null : parsed.getTime();
+  }
+  if (typeof value.toDate === "function") {
+    const parsed = value.toDate();
+    return parsed instanceof Date && !Number.isNaN(parsed.getTime()) ? parsed.getTime() : null;
+  }
+  if (Number.isFinite(value.seconds)) {
+    const nanoseconds = Number.isFinite(value.nanoseconds) ? value.nanoseconds : 0;
+    return value.seconds * 1000 + Math.floor(nanoseconds / 1000000);
+  }
+  return null;
+}
+
+function isPendingReservationStatus(status) {
+  return PENDING_RESERVATION_STATUS_VALUES.includes(normalizeReservationStatus(status));
+}
+
+function isExpiredPendingReservation(reservation, now = new Date()) {
+  if (!reservation || typeof reservation !== "object") return false;
+  if (!isPendingReservationStatus(reservation.status)) return false;
+
+  const expiresAtMillis = timestampToMillis(reservation.pendingExpiresAt);
+  if (expiresAtMillis === null) return false;
+  return expiresAtMillis <= now.getTime();
+}
+
+function reservationHoldsCapacity(reservation, now = new Date()) {
+  if (!reservation || typeof reservation !== "object") return false;
+  const status = normalizeReservationStatus(reservation.status);
+  if (!ACTIVE_RESERVATION_STATUS_VALUES.includes(status)) return false;
+  return !isExpiredPendingReservation(reservation, now);
+}
+
 function parseExplicitDayNumber(value) {
   const parsed = typeof value === "number" ? value : Number(value);
   if (!Number.isInteger(parsed)) return null;
@@ -498,10 +547,7 @@ function buildAvailabilityMonth({
     }
   }
 
-  const activeReservations = (reservations || []).filter((item) => {
-    if (!item || typeof item !== "object") return false;
-    return ACTIVE_RESERVATION_STATUS_VALUES.includes(item.status);
-  });
+  const activeReservations = (reservations || []).filter((item) => reservationHoldsCapacity(item, request.now));
 
   const days = [];
   for (let day = 1; day <= daysInMonth; day += 1) {
@@ -650,6 +696,7 @@ function totalSelectedExtrasPriceCents(selectedExtras) {
 
 module.exports = {
   ACTIVE_RESERVATION_STATUS_VALUES,
+  PENDING_RESERVATION_STATUS_VALUES,
   buildAvailabilityMonth,
   buildDefaultSlotWindows,
   buildSlotWindows,
@@ -657,7 +704,10 @@ module.exports = {
   generateDeterministicReservationCode,
   hasBlockedSlotOverlap,
   isSlotWithinOperatingHours,
+  isExpiredPendingReservation,
+  isPendingReservationStatus,
   normalizeExtraIds,
+  reservationHoldsCapacity,
   resolveSelectedExtras,
   resolveCapacityLimit,
   resolveAvailabilityRequest,

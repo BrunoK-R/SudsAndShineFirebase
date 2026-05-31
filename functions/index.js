@@ -1,13 +1,16 @@
 const admin = require("firebase-admin");
 const {setGlobalOptions, logger} = require("firebase-functions/v2");
 const {onCall, onRequest, HttpsError} = require("firebase-functions/v2/https");
+const {onSchedule} = require("firebase-functions/v2/scheduler");
 const {
   ACTIVE_RESERVATION_STATUS_VALUES,
   buildAvailabilityMonth,
   countOverlappingReservations,
   generateDeterministicReservationCode,
   hasBlockedSlotOverlap,
+  isExpiredPendingReservation,
   isSlotWithinOperatingHours,
+  reservationHoldsCapacity,
   resolveSelectedExtras,
   resolveCapacityLimit,
   resolveAvailabilityRequest,
@@ -51,6 +54,12 @@ const {
   validateRescheduleReservationInput,
 } = require("./reservationReschedule");
 const {
+  assertAdminRole,
+  assertPendingReservationActionable,
+  buildAdminPendingReservations,
+  validateAdminReservationActionInput,
+} = require("./reservationAdmin");
+const {
   assertRedeemableLoyaltyRedemption,
   buildLoyaltyRewardCode,
   buildUserLoyalty,
@@ -59,6 +68,7 @@ const {
 admin.initializeApp();
 const db = admin.firestore();
 const USER_HISTORY_RESERVATION_LIMIT = 50;
+const PENDING_RESERVATION_HOLD_MS = 24 * 60 * 60 * 1000;
 
 setGlobalOptions({
   maxInstances: 10,
@@ -85,6 +95,25 @@ async function getAllowlistedRole(email) {
   return null;
 }
 
+async function effectiveRoleFromRequest(request) {
+  const tokenRole = await userRoleFromAuth(request);
+  if (tokenRole === "admin" || tokenRole === "employee") return tokenRole;
+
+  const email = authenticatedEmail(request);
+  if (!email) return null;
+  return getAllowlistedRole(email);
+}
+
+async function assertAdminRequest(request) {
+  if (!request.auth) {
+    throw new HttpsError("unauthenticated", "Authentication required");
+  }
+
+  const role = await effectiveRoleFromRequest(request);
+  assertAdminRole(role);
+  return role;
+}
+
 function assertAuthenticatedUid(request) {
   const uid = request.auth?.uid;
   if (!uid) {
@@ -99,6 +128,40 @@ function userVehiclesCollection(uid) {
 
 function userLoyaltyRedemptionsCollection(uid) {
   return db.collection("users").doc(uid).collection("loyalty_redemptions");
+}
+
+function reservationLoyaltyRedemptionRef(data) {
+  const ownerUid = String(data?.customerUid || "").trim();
+  const redemptionId = String(data?.loyaltyRedemptionId || "").trim();
+  if (!ownerUid || !redemptionId) return null;
+  return userLoyaltyRedemptionsCollection(ownerUid).doc(redemptionId);
+}
+
+function releaseReservedLoyaltyReward(tx, reservationData) {
+  const redemptionRef = reservationLoyaltyRedemptionRef(reservationData);
+  if (!redemptionRef) return;
+
+  tx.update(redemptionRef, {
+    status: "issued",
+    reservationId: admin.firestore.FieldValue.delete(),
+    reservationCode: admin.firestore.FieldValue.delete(),
+    reservedAt: admin.firestore.FieldValue.delete(),
+    redeemedAt: admin.firestore.FieldValue.delete(),
+    updatedAt: admin.firestore.FieldValue.serverTimestamp(),
+  });
+}
+
+function redeemReservedLoyaltyReward(tx, reservationData, reservationId) {
+  const redemptionRef = reservationLoyaltyRedemptionRef(reservationData);
+  if (!redemptionRef) return;
+
+  tx.update(redemptionRef, {
+    status: "redeemed",
+    redeemedAt: admin.firestore.FieldValue.serverTimestamp(),
+    reservationId,
+    reservationCode: String(reservationData.reservationCode || "").trim(),
+    updatedAt: admin.firestore.FieldValue.serverTimestamp(),
+  });
 }
 
 function userDocument(uid) {
@@ -191,6 +254,9 @@ exports.createReservation = onCall(async (request) => {
 
   const reservationRef = db.collection("reservations").doc();
   const reservationCode = generateDeterministicReservationCode(reservationRef.id);
+  const pendingExpiresAt = admin.firestore.Timestamp.fromDate(
+    new Date(Date.now() + PENDING_RESERVATION_HOLD_MS),
+  );
 
   if (data.userVehicleId && !authenticatedUid) {
     throw new HttpsError("unauthenticated", "Authentication required for saved vehicle reservations");
@@ -303,7 +369,9 @@ exports.createReservation = onCall(async (request) => {
       throw new HttpsError("already-exists", "Selected time slot is blocked");
     }
 
-    const reservations = reservationsSnap.docs.map((docSnap) => docSnap.data());
+    const reservations = reservationsSnap.docs
+      .map((docSnap) => docSnap.data())
+      .filter((reservation) => reservationHoldsCapacity(reservation, new Date()));
     const overlappingReservations = countOverlappingReservations(reservations, slotStart, slotEnd);
     if (overlappingReservations >= capacityLimit) {
       throw new HttpsError("already-exists", "Selected time slot is unavailable");
@@ -346,6 +414,7 @@ exports.createReservation = onCall(async (request) => {
       loyaltyRewardCode: loyaltyReward?.rewardCode || "",
       loyaltyRedemptionId: loyaltyReward?.id || null,
       status: "pending",
+      pendingExpiresAt,
       notes: data.notes,
       internalNotes: "",
       createdAt: admin.firestore.FieldValue.serverTimestamp(),
@@ -355,8 +424,8 @@ exports.createReservation = onCall(async (request) => {
 
     if (loyaltyReward) {
       tx.update(loyaltyReward.ref, {
-        status: "redeemed",
-        redeemedAt: admin.firestore.FieldValue.serverTimestamp(),
+        status: "reserved",
+        reservedAt: admin.firestore.FieldValue.serverTimestamp(),
         reservationId: reservationRef.id,
         reservationCode,
         updatedAt: admin.firestore.FieldValue.serverTimestamp(),
@@ -397,6 +466,8 @@ exports.createReservation = onCall(async (request) => {
     discountCents: reservationDiscountCents,
     extras: reservationExtras,
     paymentStatus: reservationPaymentStatus,
+    status: "pending",
+    pendingExpiresAt: pendingExpiresAt.toDate().toISOString(),
   };
 });
 
@@ -754,7 +825,8 @@ exports.rescheduleMyReservation = onCall(async (request) => {
     }
 
     const reservations = docsExcludingReservation(reservationsSnap.docs, data.reservationId)
-      .map((docSnap) => docSnap.data());
+      .map((docSnap) => docSnap.data())
+      .filter((reservation) => reservationHoldsCapacity(reservation, new Date()));
     const overlappingReservations = countOverlappingReservations(reservations, data.slotStart, data.slotEnd);
     if (overlappingReservations >= capacityLimit) {
       throw new HttpsError("already-exists", "Selected time slot is unavailable");
@@ -765,6 +837,9 @@ exports.rescheduleMyReservation = onCall(async (request) => {
       slotEnd: data.slotEnd.toISOString(),
       date: dateKey,
       status: "pending",
+      pendingExpiresAt: admin.firestore.Timestamp.fromDate(
+        new Date(Date.now() + PENDING_RESERVATION_HOLD_MS),
+      ),
       previousSlotStart: currentReservation.currentSlotStart.toISOString(),
       previousSlotEnd: currentReservation.currentSlotEnd.toISOString(),
       previousStatus: currentReservation.previousStatus,
@@ -963,6 +1038,84 @@ exports.deleteVehicle = onCall(async (request) => {
   };
 });
 
+exports.getAdminPendingReservations = onCall(async (request) => {
+  await assertAdminRequest(request);
+
+  const [servicesSnap, reservationsSnap] = await Promise.all([
+    db.collection("services").get(),
+    db.collection("reservations")
+      .where("status", "in", ["pending", "novo"])
+      .get(),
+  ]);
+
+  return buildAdminPendingReservations({
+    reservationDocs: reservationsSnap.docs,
+    serviceDocs: servicesSnap.docs,
+  });
+});
+
+exports.acceptReservation = onCall(async (request) => {
+  await assertAdminRequest(request);
+  const data = validateAdminReservationActionInput(request.data);
+  const reservationRef = db.collection("reservations").doc(data.reservationId);
+  let reservationCode = "";
+
+  await db.runTransaction(async (tx) => {
+    const reservationSnap = await tx.get(reservationRef);
+    const reservationData = assertPendingReservationActionable({reservationSnap});
+
+    reservationCode = String(reservationData.reservationCode || "").trim();
+    tx.update(reservationRef, {
+      status: "confirmed",
+      acceptedAt: admin.firestore.FieldValue.serverTimestamp(),
+      acceptedByUid: request.auth.uid,
+      updatedAt: admin.firestore.FieldValue.serverTimestamp(),
+    });
+    redeemReservedLoyaltyReward(tx, reservationData, data.reservationId);
+  });
+
+  return {
+    ok: true,
+    reservationId: data.reservationId,
+    reservationCode,
+    status: "confirmed",
+  };
+});
+
+exports.rejectReservation = onCall(async (request) => {
+  await assertAdminRequest(request);
+  const data = validateAdminReservationActionInput(request.data);
+  const reservationRef = db.collection("reservations").doc(data.reservationId);
+  let reservationCode = "";
+
+  await db.runTransaction(async (tx) => {
+    const reservationSnap = await tx.get(reservationRef);
+    const reservationData = assertPendingReservationActionable({reservationSnap});
+    const update = {
+      status: "rejected",
+      rejectedAt: admin.firestore.FieldValue.serverTimestamp(),
+      rejectedByUid: request.auth.uid,
+      updatedAt: admin.firestore.FieldValue.serverTimestamp(),
+    };
+    if (data.rejectionReason) {
+      update.rejectionReason = data.rejectionReason;
+    } else {
+      update.rejectionReason = admin.firestore.FieldValue.delete();
+    }
+
+    reservationCode = String(reservationData.reservationCode || "").trim();
+    tx.update(reservationRef, update);
+    releaseReservedLoyaltyReward(tx, reservationData);
+  });
+
+  return {
+    ok: true,
+    reservationId: data.reservationId,
+    reservationCode,
+    status: "rejected",
+  };
+});
+
 exports.assignAdminRole = onCall(async (request) => {
   if (!request.auth) {
     throw new HttpsError("unauthenticated", "Authentication required");
@@ -1014,6 +1167,35 @@ exports.syncMyRole = onCall(async (request) => {
 
   await admin.auth().setCustomUserClaims(request.auth.uid, {role});
   return {ok: true, uid: request.auth.uid, email, role};
+});
+
+exports.expirePendingReservations = onSchedule("every 60 minutes", async () => {
+  const now = new Date();
+  const pendingSnap = await db.collection("reservations")
+    .where("status", "in", ["pending", "novo"])
+    .limit(250)
+    .get();
+  let expiredCount = 0;
+
+  for (const docSnap of pendingSnap.docs) {
+    if (!isExpiredPendingReservation(docSnap.data(), now)) continue;
+
+    await db.runTransaction(async (tx) => {
+      const freshSnap = await tx.get(docSnap.ref);
+      if (!freshSnap.exists || !isExpiredPendingReservation(freshSnap.data(), now)) return;
+
+      const reservationData = freshSnap.data() || {};
+      tx.update(docSnap.ref, {
+        status: "expired",
+        expiredAt: admin.firestore.FieldValue.serverTimestamp(),
+        updatedAt: admin.firestore.FieldValue.serverTimestamp(),
+      });
+      releaseReservedLoyaltyReward(tx, reservationData);
+      expiredCount += 1;
+    });
+  }
+
+  logger.info("Expired pending reservations", {expiredCount});
 });
 
 exports.health = onRequest((req, res) => {

@@ -10,6 +10,10 @@ const COMPLETED_STATUS_VALUES = [
   "cancelled",
   "canceled",
   "cancelado",
+  "rejected",
+  "rejeitado",
+  "expired",
+  "expirado",
 ];
 
 function normalizeStatus(value) {
@@ -204,6 +208,10 @@ function normalizeReservationDocument(doc, servicesById, reviewsByReservationId,
     createdAt: timestampToIso(data.createdAt),
     updatedAt: timestampToIso(data.updatedAt),
     cancelledAt: timestampToIso(data.cancelledAt) || null,
+    rejectedAt: timestampToIso(data.rejectedAt) || null,
+    rejectionReason: String(data.rejectionReason || "").trim(),
+    acceptedAt: timestampToIso(data.acceptedAt) || null,
+    pendingExpiresAt: timestampToIso(data.pendingExpiresAt) || null,
     rescheduledAt: timestampToIso(data.rescheduledAt) || null,
     previousSlotStart: String(data.previousSlotStart || "").trim() || null,
     previousSlotEnd: String(data.previousSlotEnd || "").trim() || null,

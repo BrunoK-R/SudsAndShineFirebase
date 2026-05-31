@@ -30,6 +30,11 @@ service cloud.firestore {
         (request.resource.data[key] is string && request.resource.data[key].size() <= maxLen);
     }
 
+    function optionalTimestampField(key) {
+      return !request.resource.data.keys().hasAny([key]) ||
+        request.resource.data[key] is timestamp;
+    }
+
     function isValidPublicReservationCreate() {
       return request.resource.data.keys().hasOnly([
           'reservationCode',
@@ -42,6 +47,7 @@ service cloud.firestore {
           'slotEnd',
           'date',
           'status',
+          'pendingExpiresAt',
           'notes',
           'createdAt',
           'updatedAt',
@@ -71,6 +77,7 @@ service cloud.firestore {
         request.resource.data.source == 'public-booking' &&
         request.resource.data.createdAt is timestamp &&
         request.resource.data.updatedAt is timestamp &&
+        optionalTimestampField('pendingExpiresAt') &&
         optionalStringField('customerPhone', 40) &&
         optionalStringField('serviceName', 200) &&
         optionalStringField('notes', 2000);
