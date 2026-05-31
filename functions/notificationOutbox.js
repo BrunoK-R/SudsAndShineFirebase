@@ -19,6 +19,10 @@ const REVIEW_PROMPT_RESERVATION_STATUS_VALUES = [
   "concluído",
   "done",
 ];
+const BOOKING_REMINDER_RESERVATION_STATUS_VALUES = [
+  "confirmed",
+  "confirmado",
+];
 
 function cleanReservationText(value, maxLength = 240) {
   if (value === undefined || value === null) return "";
@@ -84,6 +88,31 @@ function isReviewPromptReservationDue(reservation, now = new Date()) {
   return slotEnd <= now;
 }
 
+function isBookingReminderReservationDue(reservation, settings, now = new Date()) {
+  const customerUid = cleanReservationText(reservation?.customerUid, 128);
+  if (!customerUid) return false;
+  if (settings?.appointmentReminderEnabled === false) return false;
+
+  const status = cleanReservationText(reservation?.status || "pending", 40).toLowerCase();
+  if (!BOOKING_REMINDER_RESERVATION_STATUS_VALUES.includes(status)) return false;
+
+  const slotStart = new Date(cleanReservationText(reservation?.slotStart, 80));
+  if (Number.isNaN(slotStart.getTime())) return false;
+  if (slotStart <= now) return false;
+
+  const leadMinutes = Number.isFinite(settings?.reminderLeadMinutes) ?
+    Math.max(0, Math.floor(settings.reminderLeadMinutes)) :
+    0;
+  const reminderWindowEnd = new Date(now.getTime() + leadMinutes * 60 * 1000);
+  return slotStart <= reminderWindowEnd;
+}
+
+function notificationTypeForTemplateKey(templateKey) {
+  if (templateKey === "review_prompt") return "review_prompt";
+  if (templateKey === "booking_reminder") return "booking_reminder";
+  return "booking_status";
+}
+
 function interpolateTemplateText(text, variables) {
   return cleanReservationText(text, 600).replace(/\{\{\s*([A-Za-z0-9_]+)\s*\}\}/g, (match, key) => {
     if (!Object.prototype.hasOwnProperty.call(variables, key)) return "";
@@ -116,7 +145,7 @@ function buildReservationNotificationOutboxDocument({
 
   const now = timestamp || new Date();
   return {
-    type: templateKey === "review_prompt" ? "review_prompt" : "booking_status",
+    type: notificationTypeForTemplateKey(templateKey),
     templateKey,
     recipientUid,
     reservationId: normalizedReservationId,
@@ -187,10 +216,12 @@ function enqueueReservationNotification(tx, {
 }
 
 module.exports = {
+  BOOKING_REMINDER_RESERVATION_STATUS_VALUES,
   NOTIFICATION_OUTBOX_COLLECTION,
   REVIEW_PROMPT_RESERVATION_STATUS_VALUES,
   buildReservationNotificationOutboxDocument,
   enqueueReservationNotification,
+  isBookingReminderReservationDue,
   isReviewPromptReservationDue,
   notificationOutboxDocId,
 };

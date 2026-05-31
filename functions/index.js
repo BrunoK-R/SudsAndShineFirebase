@@ -106,9 +106,11 @@ const {
   validateUserNotificationPreferencesInput,
 } = require("./notificationPreferences");
 const {
+  BOOKING_REMINDER_RESERVATION_STATUS_VALUES,
   NOTIFICATION_OUTBOX_COLLECTION,
   REVIEW_PROMPT_RESERVATION_STATUS_VALUES,
   enqueueReservationNotification,
+  isBookingReminderReservationDue,
   isReviewPromptReservationDue,
   notificationOutboxDocId,
 } = require("./notificationOutbox");
@@ -2040,6 +2042,71 @@ exports.queueReviewPromptNotifications = onSchedule("every 60 minutes", async ()
   }
 
   logger.info("Queued review prompt notifications", {queuedCount});
+});
+
+exports.queueBookingReminderNotifications = onSchedule("every 15 minutes", async () => {
+  const now = new Date();
+  const settingsSnap = await notificationSettingsRef().get();
+  const settings = buildNotificationSettings(settingsSnap);
+  const confirmedSnap = await db.collection("reservations")
+    .where("status", "in", BOOKING_REMINDER_RESERVATION_STATUS_VALUES)
+    .limit(250)
+    .get();
+  let queuedCount = 0;
+
+  for (const docSnap of confirmedSnap.docs) {
+    if (!isBookingReminderReservationDue(docSnap.data(), settings, now)) continue;
+
+    const queued = await db.runTransaction(async (tx) => {
+      const freshSnap = await tx.get(docSnap.ref);
+      const reservationData = freshSnap.data() || {};
+      const customerUid = String(reservationData.customerUid || "").trim();
+      if (!freshSnap.exists || !customerUid) return false;
+
+      const outboxRef = db
+        .collection(NOTIFICATION_OUTBOX_COLLECTION)
+        .doc(notificationOutboxDocId("booking_reminder", docSnap.id));
+      const [
+        existingOutboxSnap,
+        notificationSettingsSnap,
+        notificationPreferencesSnap,
+        notificationUserSnap,
+      ] = await Promise.all([
+        tx.get(outboxRef),
+        tx.get(notificationSettingsRef()),
+        tx.get(userNotificationPreferencesRef(customerUid)),
+        tx.get(userDocument(customerUid)),
+      ]);
+      const freshSettings = buildNotificationSettings(notificationSettingsSnap);
+      if (!isBookingReminderReservationDue(reservationData, freshSettings, now)) return false;
+      if (existingOutboxSnap.exists) return false;
+
+      return Boolean(enqueueReservationNotification(tx, {
+        db,
+        templateKey: "booking_reminder",
+        reservationId: docSnap.id,
+        reservation: reservationData,
+        notificationSettingsSnap,
+        userPreferencesSnap: notificationPreferencesSnap,
+        userDocSnap: notificationUserSnap,
+        existingOutboxSnap,
+        actorUid: "system",
+        timestamp: admin.firestore.FieldValue.serverTimestamp(),
+      }));
+    });
+
+    if (queued) queuedCount += 1;
+  }
+
+  logger.info("Queued booking reminder notifications", {
+    scannedCount: confirmedSnap.size,
+    queuedCount,
+    reminderLeadMinutes: settings.reminderLeadMinutes,
+  });
+  return {
+    scannedCount: confirmedSnap.size,
+    queuedCount,
+  };
 });
 
 async function claimNotificationOutboxDelivery(docSnap, now = new Date()) {

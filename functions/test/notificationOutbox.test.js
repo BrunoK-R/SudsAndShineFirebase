@@ -2,10 +2,12 @@ const test = require("node:test");
 const assert = require("node:assert/strict");
 const {buildNotificationSettings} = require("../notificationAdmin");
 const {
+  BOOKING_REMINDER_RESERVATION_STATUS_VALUES,
   NOTIFICATION_OUTBOX_COLLECTION,
   REVIEW_PROMPT_RESERVATION_STATUS_VALUES,
   buildReservationNotificationOutboxDocument,
   enqueueReservationNotification,
+  isBookingReminderReservationDue,
   isReviewPromptReservationDue,
   notificationOutboxDocId,
 } = require("../notificationOutbox");
@@ -233,6 +235,57 @@ test("buildReservationNotificationOutboxDocument queues review prompts without t
   assert.equal(Object.hasOwn(payload, "token"), false);
 });
 
+test("buildReservationNotificationOutboxDocument queues reminder payloads without token exposure", () => {
+  const settings = buildNotificationSettings(doc({
+    value: {
+      appointmentReminderEnabled: true,
+      templates: [
+        {
+          key: "booking_reminder",
+          enabled: true,
+          title: "Reminder {{reservationCode}}",
+          body: "{{serviceName}} starts at {{slotStart}}.",
+        },
+      ],
+    },
+  }));
+  const preferences = {
+    bookingStatusEnabled: true,
+    appointmentReminderEnabled: true,
+    loyaltyEnabled: true,
+    marketingEnabled: false,
+  };
+
+  const payload = buildReservationNotificationOutboxDocument({
+    templateKey: "booking_reminder",
+    reservationId: "reservation-1",
+    reservation: reservation({status: "confirmed"}),
+    settings,
+    preferences,
+    actorUid: "system",
+    timestamp: new Date("2026-05-31T16:00:00.000Z"),
+  });
+  const optedOut = buildReservationNotificationOutboxDocument({
+    templateKey: "booking_reminder",
+    reservationId: "reservation-1",
+    reservation: reservation({status: "confirmed"}),
+    settings,
+    preferences: {
+      ...preferences,
+      appointmentReminderEnabled: false,
+    },
+    actorUid: "system",
+    timestamp: new Date("2026-05-31T16:00:00.000Z"),
+  });
+
+  assert.equal(payload.type, "booking_reminder");
+  assert.equal(payload.templateKey, "booking_reminder");
+  assert.equal(payload.body, "Detail starts at 2026-06-01T10:00:00.000Z.");
+  assert.equal(payload.preferencesSnapshot.appointmentReminderEnabled, true);
+  assert.equal(Object.hasOwn(payload, "token"), false);
+  assert.equal(optedOut, null);
+});
+
 test("isReviewPromptReservationDue requires owned completed past reservations", () => {
   assert.deepEqual(REVIEW_PROMPT_RESERVATION_STATUS_VALUES.includes("confirmed"), true);
   assert.equal(isReviewPromptReservationDue(reservation({
@@ -252,6 +305,50 @@ test("isReviewPromptReservationDue requires owned completed past reservations", 
     status: "confirmed",
     slotEnd: "2026-05-31T15:00:00.000Z",
   }), new Date("2026-05-31T16:00:00.000Z")), false);
+});
+
+test("isBookingReminderReservationDue requires owned confirmed reservations inside lead window", () => {
+  const settings = buildNotificationSettings(doc({
+    value: {
+      appointmentReminderEnabled: true,
+      reminderLeadMinutes: 120,
+    },
+  }));
+  const now = new Date("2026-06-01T08:00:00.000Z");
+
+  assert.deepEqual(BOOKING_REMINDER_RESERVATION_STATUS_VALUES.includes("confirmed"), true);
+  assert.equal(isBookingReminderReservationDue(reservation({
+    status: "confirmed",
+    slotStart: "2026-06-01T09:30:00.000Z",
+  }), settings, now), true);
+  assert.equal(isBookingReminderReservationDue(reservation({
+    status: "confirmado",
+    slotStart: "2026-06-01T09:30:00.000Z",
+  }), settings, now), true);
+  assert.equal(isBookingReminderReservationDue(reservation({
+    status: "pending",
+    slotStart: "2026-06-01T09:30:00.000Z",
+  }), settings, now), false);
+  assert.equal(isBookingReminderReservationDue(reservation({
+    status: "confirmed",
+    slotStart: "2026-06-01T10:30:00.000Z",
+  }), settings, now), false);
+  assert.equal(isBookingReminderReservationDue(reservation({
+    status: "confirmed",
+    slotStart: "2026-06-01T07:30:00.000Z",
+  }), settings, now), false);
+  assert.equal(isBookingReminderReservationDue(reservation({
+    customerUid: "",
+    status: "confirmed",
+    slotStart: "2026-06-01T09:30:00.000Z",
+  }), settings, now), false);
+  assert.equal(isBookingReminderReservationDue(reservation({
+    status: "confirmed",
+    slotStart: "2026-06-01T09:30:00.000Z",
+  }), {
+    ...settings,
+    appointmentReminderEnabled: false,
+  }, now), false);
 });
 
 test("enqueueReservationNotification does not requeue an existing outbox record", () => {
