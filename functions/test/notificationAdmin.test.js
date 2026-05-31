@@ -21,6 +21,10 @@ test("buildNotificationSettings returns safe defaults when no settings exist", (
   assert.deepEqual(settings.templates.map((template) => template.key), TEMPLATE_KEYS);
   assert.equal(settings.templates.find((template) => template.key === "booking_cancelled").title, "Marcação cancelada");
   assert.equal(settings.templates.find((template) => template.key === "booking_rescheduled").enabled, true);
+  assert.equal(
+    settings.templates.find((template) => template.key === "admin_pending_booking").title,
+    "Novo pedido de marcação",
+  );
   assert.equal(settings.source, "default");
 });
 
@@ -94,7 +98,7 @@ test("validateNotificationSettingsUpdateInput sanitizes admin settings", () => {
 
 test("validateNotificationSettingsUpdateInput backfills newly added templates", () => {
   const legacyTemplateKeys = TEMPLATE_KEYS.filter((key) =>
-    key !== "booking_cancelled" && key !== "booking_rescheduled",
+    key !== "booking_cancelled" && key !== "booking_rescheduled" && key !== "admin_pending_booking",
   );
   const settings = validateNotificationSettingsUpdateInput({
     ...validPayload(),
@@ -106,6 +110,10 @@ test("validateNotificationSettingsUpdateInput backfills newly added templates", 
   assert.equal(
     settings.templates.find((template) => template.key === "booking_rescheduled").body,
     "A sua marcação foi remarcada para {{slotStart}}. Consulte os detalhes na app.",
+  );
+  assert.equal(
+    settings.templates.find((template) => template.key === "admin_pending_booking").body,
+    "{{customerName}} pediu {{serviceName}} para {{slotStart}}.",
   );
 });
 

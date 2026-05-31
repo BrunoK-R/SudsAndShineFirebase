@@ -9,10 +9,12 @@ const TEMPLATE_KEYS = [
   "booking_rescheduled",
   "booking_reminder",
   "review_prompt",
+  "admin_pending_booking",
 ];
 const BACKWARD_COMPATIBLE_TEMPLATE_KEYS = new Set([
   "booking_cancelled",
   "booking_rescheduled",
+  "admin_pending_booking",
 ]);
 
 const DEFAULT_NOTIFICATION_TEMPLATES = [
@@ -71,6 +73,13 @@ const DEFAULT_NOTIFICATION_TEMPLATES = [
     enabled: true,
     title: "Como correu a lavagem?",
     body: "Avalie o serviço para nos ajudar a melhorar.",
+  },
+  {
+    key: "admin_pending_booking",
+    label: "Alerta admin de pedido",
+    enabled: true,
+    title: "Novo pedido de marcação",
+    body: "{{customerName}} pediu {{serviceName}} para {{slotStart}}.",
   },
 ];
 

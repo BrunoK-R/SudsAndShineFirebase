@@ -2,6 +2,7 @@ const {buildNotificationSettings} = require("./notificationAdmin");
 const {buildUserNotificationPreferences} = require("./notificationPreferences");
 
 const NOTIFICATION_OUTBOX_COLLECTION = "notification_outbox";
+const ADMIN_PENDING_BOOKING_TEMPLATE_KEY = "admin_pending_booking";
 const BOOKING_STATUS_TEMPLATE_KEYS = new Set([
   "booking_request",
   "booking_accepted",
@@ -35,11 +36,19 @@ function notificationOutboxDocId(templateKey, reservationId) {
   return `${safeTemplateKey}_${safeReservationId}`;
 }
 
+function adminNotificationOutboxDocId(templateKey, reservationId, recipientUid) {
+  const safeRecipientUid = cleanReservationText(recipientUid, 128).replace(/[^A-Za-z0-9_-]/g, "_");
+  return `${notificationOutboxDocId(templateKey, reservationId)}_${safeRecipientUid}`;
+}
+
 function templateForKey(settings, templateKey) {
   return (settings.templates || []).find((template) => template.key === templateKey) || null;
 }
 
 function isTemplateGloballyEnabled(settings, templateKey) {
+  if (templateKey === ADMIN_PENDING_BOOKING_TEMPLATE_KEY) {
+    return settings.adminPendingAlertEnabled !== false;
+  }
   if (BOOKING_STATUS_TEMPLATE_KEYS.has(templateKey)) {
     return settings.bookingStatusEnabled !== false;
   }
@@ -66,6 +75,9 @@ function reservationVariables(reservationId, reservation) {
   return {
     reservationId,
     reservationCode: cleanReservationText(reservation.reservationCode, 40),
+    customerName: cleanReservationText(reservation.customerName, 160),
+    customerEmail: cleanReservationText(reservation.customerEmail, 160),
+    customerPhone: cleanReservationText(reservation.customerPhone, 80),
     serviceName: cleanReservationText(reservation.serviceName || "Servico", 160),
     slotStart: cleanReservationText(reservation.slotStart, 80),
     slotEnd: cleanReservationText(reservation.slotEnd, 80),
@@ -108,6 +120,7 @@ function isBookingReminderReservationDue(reservation, settings, now = new Date()
 }
 
 function notificationTypeForTemplateKey(templateKey) {
+  if (templateKey === ADMIN_PENDING_BOOKING_TEMPLATE_KEY) return "admin_pending_booking";
   if (templateKey === "review_prompt") return "review_prompt";
   if (templateKey === "booking_reminder") return "booking_reminder";
   return "booking_status";
@@ -178,6 +191,61 @@ function buildReservationNotificationOutboxDocument({
   };
 }
 
+function buildAdminPendingBookingNotificationOutboxDocument({
+  reservationId,
+  reservation,
+  settings,
+  recipientUid,
+  actorUid = "",
+  timestamp = null,
+} = {}) {
+  const normalizedRecipientUid = cleanReservationText(recipientUid, 128);
+  const normalizedReservationId = cleanReservationText(reservationId, 160);
+  if (!normalizedRecipientUid || !normalizedReservationId) return null;
+  if (!isTemplateGloballyEnabled(settings, ADMIN_PENDING_BOOKING_TEMPLATE_KEY)) return null;
+
+  const template = templateForKey(settings, ADMIN_PENDING_BOOKING_TEMPLATE_KEY);
+  if (!template || template.enabled === false) return null;
+
+  const variables = reservationVariables(normalizedReservationId, reservation || {});
+  const title = interpolateTemplateText(template.title, variables);
+  const body = interpolateTemplateText(template.body, variables);
+  if (!title || !body) return null;
+
+  const now = timestamp || new Date();
+  return {
+    type: "admin_pending_booking",
+    templateKey: ADMIN_PENDING_BOOKING_TEMPLATE_KEY,
+    recipientUid: normalizedRecipientUid,
+    reservationId: normalizedReservationId,
+    reservationCode: variables.reservationCode,
+    customerUid: cleanReservationText(reservation?.customerUid, 128),
+    customerName: variables.customerName,
+    serviceName: variables.serviceName,
+    slotStart: variables.slotStart,
+    slotEnd: variables.slotEnd,
+    status: variables.status,
+    title,
+    body,
+    channels: ["push"],
+    deliveryState: "queued",
+    attemptCount: 0,
+    dedupeKey: `${ADMIN_PENDING_BOOKING_TEMPLATE_KEY}:${normalizedReservationId}:${normalizedRecipientUid}`,
+    createdAt: now,
+    updatedAt: now,
+    createdByUid: cleanReservationText(actorUid, 128) || "system",
+    source: "admin-pending-booking",
+    templateSnapshot: {
+      key: template.key,
+      title: template.title,
+      body: template.body,
+    },
+    preferencesSnapshot: {
+      adminPendingAlertEnabled: settings.adminPendingAlertEnabled !== false,
+    },
+  };
+}
+
 function enqueueReservationNotification(tx, {
   db,
   templateKey,
@@ -215,11 +283,47 @@ function enqueueReservationNotification(tx, {
   return document;
 }
 
+function enqueueAdminPendingBookingNotification(tx, {
+  db,
+  reservationId,
+  reservation,
+  recipientUid,
+  notificationSettingsSnap = null,
+  existingOutboxSnap = null,
+  actorUid = "",
+  timestamp = null,
+} = {}) {
+  const settings = buildNotificationSettings(notificationSettingsSnap);
+  const document = buildAdminPendingBookingNotificationOutboxDocument({
+    reservationId,
+    reservation,
+    settings,
+    recipientUid,
+    actorUid,
+    timestamp,
+  });
+
+  if (!document) return null;
+  if (existingOutboxSnap?.exists) return null;
+
+  tx.set(
+    db.collection(NOTIFICATION_OUTBOX_COLLECTION).doc(
+      adminNotificationOutboxDocId(ADMIN_PENDING_BOOKING_TEMPLATE_KEY, reservationId, recipientUid),
+    ),
+    document,
+  );
+  return document;
+}
+
 module.exports = {
+  ADMIN_PENDING_BOOKING_TEMPLATE_KEY,
   BOOKING_REMINDER_RESERVATION_STATUS_VALUES,
   NOTIFICATION_OUTBOX_COLLECTION,
   REVIEW_PROMPT_RESERVATION_STATUS_VALUES,
+  adminNotificationOutboxDocId,
+  buildAdminPendingBookingNotificationOutboxDocument,
   buildReservationNotificationOutboxDocument,
+  enqueueAdminPendingBookingNotification,
   enqueueReservationNotification,
   isBookingReminderReservationDue,
   isReviewPromptReservationDue,

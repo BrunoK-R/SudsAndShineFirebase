@@ -2,10 +2,14 @@ const test = require("node:test");
 const assert = require("node:assert/strict");
 const {buildNotificationSettings} = require("../notificationAdmin");
 const {
+  ADMIN_PENDING_BOOKING_TEMPLATE_KEY,
   BOOKING_REMINDER_RESERVATION_STATUS_VALUES,
   NOTIFICATION_OUTBOX_COLLECTION,
   REVIEW_PROMPT_RESERVATION_STATUS_VALUES,
+  adminNotificationOutboxDocId,
+  buildAdminPendingBookingNotificationOutboxDocument,
   buildReservationNotificationOutboxDocument,
+  enqueueAdminPendingBookingNotification,
   enqueueReservationNotification,
   isBookingReminderReservationDue,
   isReviewPromptReservationDue,
@@ -284,6 +288,112 @@ test("buildReservationNotificationOutboxDocument queues reminder payloads withou
   assert.equal(payload.preferencesSnapshot.appointmentReminderEnabled, true);
   assert.equal(Object.hasOwn(payload, "token"), false);
   assert.equal(optedOut, null);
+});
+
+test("buildAdminPendingBookingNotificationOutboxDocument queues admin alerts without customer preferences", () => {
+  const settings = buildNotificationSettings(doc({
+    value: {
+      adminPendingAlertEnabled: true,
+      templates: [
+        {
+          key: ADMIN_PENDING_BOOKING_TEMPLATE_KEY,
+          enabled: true,
+          title: "New request {{reservationCode}}",
+          body: "{{customerName}} requested {{serviceName}} at {{slotStart}}.",
+        },
+      ],
+    },
+  }));
+  const payload = buildAdminPendingBookingNotificationOutboxDocument({
+    reservationId: "reservation-1",
+    reservation: reservation({
+      customerName: "  Bruno   Ribeiro  ",
+      serviceName: "Premium",
+    }),
+    settings,
+    recipientUid: "admin-1",
+    actorUid: "public-booking",
+    timestamp: new Date("2026-05-31T16:20:00.000Z"),
+  });
+
+  assert.equal(payload.type, "admin_pending_booking");
+  assert.equal(payload.templateKey, ADMIN_PENDING_BOOKING_TEMPLATE_KEY);
+  assert.equal(payload.recipientUid, "admin-1");
+  assert.equal(payload.title, "New request SS-ABCDEFGH");
+  assert.equal(payload.body, "Bruno Ribeiro requested Premium at 2026-06-01T10:00:00.000Z.");
+  assert.equal(payload.deliveryState, "queued");
+  assert.equal(payload.createdByUid, "public-booking");
+  assert.equal(payload.preferencesSnapshot.adminPendingAlertEnabled, true);
+  assert.equal(Object.hasOwn(payload, "token"), false);
+});
+
+test("buildAdminPendingBookingNotificationOutboxDocument respects admin alert opt-outs", () => {
+  const enabledSettings = buildNotificationSettings(doc({
+    value: {
+      adminPendingAlertEnabled: true,
+      templates: [
+        {
+          key: ADMIN_PENDING_BOOKING_TEMPLATE_KEY,
+          enabled: false,
+          title: "New request",
+          body: "New request",
+        },
+      ],
+    },
+  }));
+  const disabledSettings = buildNotificationSettings(doc({
+    value: {
+      adminPendingAlertEnabled: false,
+    },
+  }));
+
+  assert.equal(buildAdminPendingBookingNotificationOutboxDocument({
+    reservationId: "reservation-1",
+    reservation: reservation(),
+    settings: disabledSettings,
+    recipientUid: "admin-1",
+  }), null);
+  assert.equal(buildAdminPendingBookingNotificationOutboxDocument({
+    reservationId: "reservation-1",
+    reservation: reservation(),
+    settings: enabledSettings,
+    recipientUid: "admin-1",
+  }), null);
+  assert.equal(buildAdminPendingBookingNotificationOutboxDocument({
+    reservationId: "reservation-1",
+    reservation: reservation(),
+    settings: buildNotificationSettings(null),
+    recipientUid: "",
+  }), null);
+});
+
+test("enqueueAdminPendingBookingNotification writes deterministic per-admin outbox documents", () => {
+  const tx = fakeTx();
+  const db = fakeDb();
+  const queued = enqueueAdminPendingBookingNotification(tx, {
+    db,
+    reservationId: "reservation-1",
+    reservation: reservation(),
+    recipientUid: "admin-1",
+    notificationSettingsSnap: doc({
+      value: {
+        adminPendingAlertEnabled: true,
+      },
+    }),
+    actorUid: "public-booking",
+    timestamp: new Date("2026-05-31T16:25:00.000Z"),
+  });
+
+  assert.equal(queued.templateKey, ADMIN_PENDING_BOOKING_TEMPLATE_KEY);
+  assert.equal(tx.writes.length, 1);
+  assert.deepEqual(tx.writes[0], {
+    path: `${NOTIFICATION_OUTBOX_COLLECTION}/${adminNotificationOutboxDocId(
+      ADMIN_PENDING_BOOKING_TEMPLATE_KEY,
+      "reservation-1",
+      "admin-1",
+    )}`,
+    data: queued,
+  });
 });
 
 test("isReviewPromptReservationDue requires owned completed past reservations", () => {

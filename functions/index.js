@@ -109,6 +109,7 @@ const {
   BOOKING_REMINDER_RESERVATION_STATUS_VALUES,
   NOTIFICATION_OUTBOX_COLLECTION,
   REVIEW_PROMPT_RESERVATION_STATUS_VALUES,
+  enqueueAdminPendingBookingNotification,
   enqueueReservationNotification,
   isBookingReminderReservationDue,
   isReviewPromptReservationDue,
@@ -129,6 +130,7 @@ const {
 admin.initializeApp();
 const db = admin.firestore();
 const USER_HISTORY_RESERVATION_LIMIT = 50;
+const ADMIN_ALERT_RECIPIENT_LIMIT = 25;
 
 setGlobalOptions({
   maxInstances: 10,
@@ -208,6 +210,46 @@ function userNotificationPreferencesRef(uid) {
 
 function userNotificationTokensCollection(uid) {
   return userDocument(uid).collection("notification_tokens");
+}
+
+function adminAlertRecipientsQuery() {
+  return db.collection("admin_allowlist")
+    .where("role", "==", "admin")
+    .limit(ADMIN_ALERT_RECIPIENT_LIMIT);
+}
+
+function adminAlertRecipientUidsFromSnapshot(snap) {
+  const seen = new Set();
+  const recipientUids = [];
+  for (const docSnap of snap?.docs || []) {
+    const uid = String(docSnap.get("uid") || "").trim();
+    if (!uid || uid.includes("/") || uid.length > 128 || seen.has(uid)) continue;
+    seen.add(uid);
+    recipientUids.push(uid);
+  }
+  return recipientUids;
+}
+
+function enqueueAdminPendingBookingAlerts(tx, {
+  reservationId,
+  reservation,
+  notificationSettingsSnap,
+  adminAllowlistSnap,
+  actorUid = "",
+} = {}) {
+  const recipientUids = adminAlertRecipientUidsFromSnapshot(adminAllowlistSnap);
+  for (const recipientUid of recipientUids) {
+    enqueueAdminPendingBookingNotification(tx, {
+      db,
+      reservationId,
+      reservation,
+      recipientUid,
+      notificationSettingsSnap,
+      actorUid,
+      timestamp: admin.firestore.FieldValue.serverTimestamp(),
+    });
+  }
+  return recipientUids.length;
 }
 
 function selectedLoyaltySettingsSnapshot(primarySnap, legacySnap) {
@@ -386,6 +428,7 @@ exports.createReservation = onCall(async (request) => {
       null;
     const notificationPreferencesRef = authenticatedUid ? userNotificationPreferencesRef(authenticatedUid) : null;
     const notificationUserRef = authenticatedUid ? userDocument(authenticatedUid) : null;
+    const adminAlertsQuery = adminAlertRecipientsQuery();
 
     const [
       reservationsSnap,
@@ -402,6 +445,7 @@ exports.createReservation = onCall(async (request) => {
       notificationSettingsSnap,
       notificationPreferencesSnap,
       notificationUserSnap,
+      adminAllowlistSnap,
     ] = await Promise.all([
       tx.get(reservationsQuery),
       tx.get(blockedQuery),
@@ -414,9 +458,10 @@ exports.createReservation = onCall(async (request) => {
       tx.get(extrasQuery),
       userVehicleRef ? tx.get(userVehicleRef) : Promise.resolve(null),
       loyaltyRewardQuery ? tx.get(loyaltyRewardQuery) : Promise.resolve(null),
-      authenticatedUid ? tx.get(notificationSettingsRef()) : Promise.resolve(null),
+      tx.get(notificationSettingsRef()),
       notificationPreferencesRef ? tx.get(notificationPreferencesRef) : Promise.resolve(null),
       notificationUserRef ? tx.get(notificationUserRef) : Promise.resolve(null),
+      tx.get(adminAlertsQuery),
     ]);
 
     const capacityOverride = capacityOverrideSnap.empty ? null : capacityOverrideSnap.docs[0].data();
@@ -543,6 +588,13 @@ exports.createReservation = onCall(async (request) => {
         timestamp: admin.firestore.FieldValue.serverTimestamp(),
       });
     }
+    enqueueAdminPendingBookingAlerts(tx, {
+      reservationId: reservationRef.id,
+      reservation: reservationDocument,
+      notificationSettingsSnap,
+      adminAllowlistSnap,
+      actorUid: authenticatedUid || "public-booking",
+    });
 
     appliedLoyaltyReward = loyaltyReward ? {
       id: loyaltyReward.id,
@@ -1904,6 +1956,7 @@ exports.assignAdminRole = onCall(async (request) => {
 
   await db.collection("admin_allowlist").doc(email).set(
     {
+      uid: user.uid,
       email,
       role,
       updatedAt: admin.firestore.FieldValue.serverTimestamp(),
@@ -1929,6 +1982,15 @@ exports.syncMyRole = onCall(async (request) => {
   }
 
   await admin.auth().setCustomUserClaims(request.auth.uid, {role});
+  await db.collection("admin_allowlist").doc(email).set(
+    {
+      uid: request.auth.uid,
+      email,
+      role,
+      lastSyncedAt: admin.firestore.FieldValue.serverTimestamp(),
+    },
+    {merge: true},
+  );
   return {ok: true, uid: request.auth.uid, email, role};
 });
 
