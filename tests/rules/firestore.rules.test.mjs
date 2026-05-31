@@ -85,6 +85,8 @@ test('public can read services but cannot write them', async () => {
   const db = unauthDb();
   await assertSucceeds(getDoc(doc(db, 'services', 'basic-wash')));
   await assertFails(setDoc(doc(db, 'services', 'new-service'), {name: 'Hack'}));
+  await assertFails(setDoc(doc(staffDb(), 'services', 'staff-service'), {name: 'Staff overwrite'}));
+  await assertSucceeds(setDoc(doc(adminDb(), 'services', 'admin-service'), {name: 'Admin service'}));
 });
 
 test('employee can write portfolio while public cannot', async () => {

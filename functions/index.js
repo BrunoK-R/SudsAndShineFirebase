@@ -20,10 +20,14 @@ const {
 const {
   assertCatalogReadable,
   buildServiceCatalog,
+  validateAdminServiceCatalogArchiveInput,
+  validateAdminServiceCatalogItemInput,
 } = require("./serviceCatalog");
 const {
   assertBusinessInfoReadable,
+  buildBusinessInfoSettingValue,
   buildBusinessInfo,
+  validateBusinessInfoUpdateInput,
 } = require("./businessInfo");
 const {
   buildUserReservationHistory,
@@ -1052,6 +1056,105 @@ exports.getAdminPendingReservations = onCall(async (request) => {
     reservationDocs: reservationsSnap.docs,
     serviceDocs: servicesSnap.docs,
   });
+});
+
+exports.getAdminBusinessInfo = onCall(async (request) => {
+  await assertAdminRequest(request);
+
+  const [directSnap, keyedSnap] = await Promise.all([
+    db.collection("business_settings").doc("business_info").get(),
+    db.collection("business_settings").where("key", "==", "business_info").limit(1).get(),
+  ]);
+  const businessInfo = businessInfoFromSnapshots(directSnap, keyedSnap);
+  assertBusinessInfoReadable(businessInfo);
+  return businessInfo;
+});
+
+exports.updateBusinessInfo = onCall(async (request) => {
+  await assertAdminRequest(request);
+  const businessInfo = validateBusinessInfoUpdateInput(request.data);
+  const value = buildBusinessInfoSettingValue(businessInfo);
+
+  await db.collection("business_settings").doc("business_info").set(
+    {
+      key: "business_info",
+      value,
+      updatedAt: admin.firestore.FieldValue.serverTimestamp(),
+      updatedByUid: request.auth.uid,
+      updateSource: "admin-mobile",
+    },
+    {merge: true},
+  );
+
+  return {
+    ...businessInfo,
+    source: "firestore",
+  };
+});
+
+exports.upsertServiceCatalogItem = onCall(async (request) => {
+  await assertAdminRequest(request);
+  const serviceCollection = db.collection("services");
+  const fallbackServiceRef = serviceCollection.doc();
+  const data = validateAdminServiceCatalogItemInput(request.data, fallbackServiceRef.id);
+  const serviceRef = serviceCollection.doc(data.serviceId);
+  let created = false;
+
+  await db.runTransaction(async (tx) => {
+    const serviceSnap = await tx.get(serviceRef);
+    created = !serviceSnap.exists;
+    const update = {
+      ...data.document,
+      updatedAt: admin.firestore.FieldValue.serverTimestamp(),
+      updatedByUid: request.auth.uid,
+    };
+
+    if (created) {
+      update.createdAt = admin.firestore.FieldValue.serverTimestamp();
+      update.createdByUid = request.auth.uid;
+    }
+    if (data.document.active) {
+      update.archivedAt = admin.firestore.FieldValue.delete();
+      update.archivedByUid = admin.firestore.FieldValue.delete();
+    }
+
+    tx.set(serviceRef, update, {merge: true});
+  });
+
+  return {
+    ok: true,
+    serviceId: data.serviceId,
+    status: data.document.active ? "active" : "inactive",
+    created,
+  };
+});
+
+exports.archiveServiceCatalogItem = onCall(async (request) => {
+  await assertAdminRequest(request);
+  const data = validateAdminServiceCatalogArchiveInput(request.data);
+  const serviceRef = db.collection("services").doc(data.serviceId);
+
+  await db.runTransaction(async (tx) => {
+    const serviceSnap = await tx.get(serviceRef);
+    if (!serviceSnap.exists) {
+      throw new HttpsError("not-found", "Service catalog item not found");
+    }
+
+    tx.update(serviceRef, {
+      active: false,
+      enabled: false,
+      archivedAt: admin.firestore.FieldValue.serverTimestamp(),
+      archivedByUid: request.auth.uid,
+      updatedAt: admin.firestore.FieldValue.serverTimestamp(),
+      updatedByUid: request.auth.uid,
+    });
+  });
+
+  return {
+    ok: true,
+    serviceId: data.serviceId,
+    status: "archived",
+  };
 });
 
 exports.acceptReservation = onCall(async (request) => {

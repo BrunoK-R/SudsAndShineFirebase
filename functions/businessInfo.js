@@ -45,7 +45,11 @@ const DEFAULT_BUSINESS_INFO = {
     {value: "4.9", label: "Avaliação Média"},
     {value: "3+", label: "Anos Experiência"},
   ],
+  socialLinks: [],
 };
+
+const MAX_OPENING_HOURS = 10;
+const MAX_SOCIAL_LINKS = 8;
 
 function shortString(value, fallback, maxLength = 500) {
   if (typeof value !== "string") return fallback;
@@ -113,6 +117,23 @@ function normalizeStats(value, fallback = DEFAULT_BUSINESS_INFO.stats) {
   return items.length > 0 ? items : fallback;
 }
 
+function normalizeSocialLinks(value, fallback = DEFAULT_BUSINESS_INFO.socialLinks) {
+  if (!Array.isArray(value)) return fallback;
+
+  const items = value
+    .map((item) => {
+      if (!item || typeof item !== "object") return null;
+      const label = shortString(item.label || item.name, "", 80);
+      const uri = linkString(item.uri || item.url || item.href, "");
+      if (!label || !uri) return null;
+      return {label, uri};
+    })
+    .filter(Boolean)
+    .slice(0, MAX_SOCIAL_LINKS);
+
+  return items.length > 0 ? items : fallback;
+}
+
 function settingPayload(data) {
   if (!data || typeof data !== "object") return {};
   const nested = data.value && typeof data.value === "object" ? data.value : null;
@@ -144,6 +165,7 @@ function buildBusinessInfo(docSnap = null) {
     openingHours: normalizeOpeningHours(source.openingHours || source.hours),
     faq: normalizeFaq(source.faq),
     stats: normalizeStats(source.stats),
+    socialLinks: normalizeSocialLinks(source.socialLinks),
     source: docSnap?.exists ? "firestore" : "default",
   };
 }
@@ -162,11 +184,146 @@ function assertBusinessInfoReadable(info) {
   }
 }
 
+function requiredString(value, fieldName, maxLength) {
+  if (typeof value !== "string") {
+    throw new HttpsError("invalid-argument", `${fieldName} is required`);
+  }
+  const trimmed = value.trim().replace(/\s+/g, " ");
+  if (!trimmed) {
+    throw new HttpsError("invalid-argument", `${fieldName} is required`);
+  }
+  if (trimmed.length > maxLength) {
+    throw new HttpsError("invalid-argument", `${fieldName} is too long`);
+  }
+  return trimmed;
+}
+
+function requiredUri(value, fieldName) {
+  const uri = requiredString(value, fieldName, 1000);
+  let parsed;
+  try {
+    parsed = new URL(uri);
+  } catch (error) {
+    throw new HttpsError("invalid-argument", `${fieldName} must be a valid URL`);
+  }
+
+  if (parsed.protocol !== "https:" && parsed.protocol !== "http:") {
+    throw new HttpsError("invalid-argument", `${fieldName} must be a web URL`);
+  }
+  return uri;
+}
+
+function normalizePhoneUri(phone) {
+  const normalized = phone.replace(/[^\d+]/g, "");
+  if (!normalized || normalized.length < 6) {
+    throw new HttpsError("invalid-argument", "phone is invalid");
+  }
+  return `tel:${normalized}`;
+}
+
+function normalizeEmailUri(email) {
+  if (!/^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(email)) {
+    throw new HttpsError("invalid-argument", "email is invalid");
+  }
+  return `mailto:${email}`;
+}
+
+function validateOpeningHoursInput(value) {
+  if (!Array.isArray(value)) {
+    throw new HttpsError("invalid-argument", "openingHours is required");
+  }
+
+  const items = value
+    .slice(0, MAX_OPENING_HOURS)
+    .map((item) => {
+      if (!item || typeof item !== "object") {
+        throw new HttpsError("invalid-argument", "openingHours entries must be objects");
+      }
+      return {
+        dayLabel: requiredString(item.dayLabel || item.day, "dayLabel", 80),
+        hoursLabel: requiredString(item.hoursLabel || item.hours, "hoursLabel", 80),
+        closed: item.closed === true,
+      };
+    });
+
+  if (items.length === 0) {
+    throw new HttpsError("invalid-argument", "openingHours must include at least one row");
+  }
+  return items;
+}
+
+function validateSocialLinksInput(value) {
+  if (value === undefined || value === null) return [];
+  if (!Array.isArray(value)) {
+    throw new HttpsError("invalid-argument", "socialLinks must be a list");
+  }
+
+  return value
+    .slice(0, MAX_SOCIAL_LINKS)
+    .map((item) => {
+      if (!item || typeof item !== "object") {
+        throw new HttpsError("invalid-argument", "socialLinks entries must be objects");
+      }
+      return {
+        label: requiredString(item.label || item.name, "socialLink.label", 80),
+        uri: requiredUri(item.uri || item.url || item.href, "socialLink.uri"),
+      };
+    });
+}
+
+function validateBusinessInfoUpdateInput(data = {}) {
+  if (!data || typeof data !== "object" || Array.isArray(data)) {
+    throw new HttpsError("invalid-argument", "Business info payload is required");
+  }
+
+  const phone = requiredString(data.phone, "phone", 60);
+  const email = requiredString(data.email, "email", 320).toLowerCase();
+  const addressLine1 = requiredString(data.addressLine1, "addressLine1", 160);
+  const addressLine2 = requiredString(data.addressLine2, "addressLine2", 160);
+  const mapsUri = requiredUri(data.mapsUri, "mapsUri");
+  const whatsappUri = requiredUri(data.whatsappUri, "whatsappUri");
+
+  return {
+    phone,
+    phoneUri: normalizePhoneUri(phone),
+    email,
+    emailUri: normalizeEmailUri(email),
+    addressLine1,
+    addressLine2,
+    mapsUri,
+    whatsappUri,
+    openingHours: validateOpeningHoursInput(data.openingHours),
+    socialLinks: validateSocialLinksInput(data.socialLinks),
+  };
+}
+
+function buildBusinessInfoSettingValue(info) {
+  return {
+    contact: {
+      phone: info.phone,
+      phoneUri: info.phoneUri,
+      email: info.email,
+      emailUri: info.emailUri,
+      whatsappUri: info.whatsappUri,
+    },
+    address: {
+      line1: info.addressLine1,
+      line2: info.addressLine2,
+      mapsUri: info.mapsUri,
+    },
+    openingHours: info.openingHours,
+    socialLinks: info.socialLinks,
+  };
+}
+
 module.exports = {
   DEFAULT_BUSINESS_INFO,
   assertBusinessInfoReadable,
+  buildBusinessInfoSettingValue,
   buildBusinessInfo,
   normalizeFaq,
   normalizeOpeningHours,
+  normalizeSocialLinks,
   normalizeStats,
+  validateBusinessInfoUpdateInput,
 };

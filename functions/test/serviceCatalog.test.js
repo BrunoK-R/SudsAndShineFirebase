@@ -8,6 +8,8 @@ const {
   normalizeServiceDocument,
   parseDurationMinutes,
   parsePriceCents,
+  validateAdminServiceCatalogArchiveInput,
+  validateAdminServiceCatalogItemInput,
 } = require("../serviceCatalog");
 
 function doc(id, data) {
@@ -72,6 +74,27 @@ test("buildServiceCatalog sorts active services and omits inactive documents", (
   assert.deepEqual(catalog.services.map((service) => service.id), ["standard", "interior"]);
   assert.deepEqual(catalog.extras.map((extra) => extra.id), DEFAULT_EXTRAS.map((extra) => extra.id));
   assert.equal(catalog.services[0].sortOrder, undefined);
+});
+
+test("buildServiceCatalog omits disabled service documents", () => {
+  const catalog = buildServiceCatalog([
+    doc("disabled", {
+      name: "Disabled",
+      enabled: false,
+      durationMinutes: 30,
+      passengerPriceCents: 2500,
+      sortOrder: 1,
+    }),
+    doc("enabled", {
+      name: "Enabled",
+      enabled: true,
+      durationMinutes: 30,
+      passengerPriceCents: 2500,
+      sortOrder: 2,
+    }),
+  ]);
+
+  assert.deepEqual(catalog.services.map((service) => service.id), ["enabled"]);
 });
 
 test("buildServiceCatalog falls back to default services when Firestore is empty", () => {
@@ -140,4 +163,63 @@ test("catalog parsers coerce duration and euro prices", () => {
   assert.equal(parsePriceCents("18,50€"), 1850);
   assert.equal(parsePriceCents(18.5), 1850);
   assert.equal(parsePriceCents(1850), 1850);
+});
+
+test("validates and sanitizes admin service catalog payloads", () => {
+  const parsed = validateAdminServiceCatalogItemInput({
+    serviceId: " premium-detail ",
+    name: " Lavagem   Premium ",
+    description: " Detalhe   completo ",
+    durationMinutes: 999,
+    passengerPrice: "32,00€",
+    suvPriceCents: 3400,
+    iconKey: " sparkles ",
+    popular: true,
+    enabled: false,
+    sortOrder: -4,
+  });
+
+  assert.equal(parsed.serviceId, "premium-detail");
+  assert.deepEqual(parsed.document, {
+    id: "premium-detail",
+    name: "Lavagem Premium",
+    description: "Detalhe completo",
+    durationMinutes: 480,
+    passengerPriceCents: 3200,
+    suvPriceCents: 3400,
+    iconKey: "sparkles",
+    popular: true,
+    active: false,
+    enabled: false,
+    sortOrder: 0,
+  });
+});
+
+test("admin service catalog validation rejects path ids and missing prices", () => {
+  assert.throws(
+    () => validateAdminServiceCatalogItemInput({
+      serviceId: "services/premium",
+      name: "Premium",
+      passengerPriceCents: 3200,
+    }),
+    /path separators/,
+  );
+  assert.throws(
+    () => validateAdminServiceCatalogItemInput({
+      serviceId: "premium",
+      name: "Premium",
+    }),
+    /passengerPriceCents is required/,
+  );
+});
+
+test("validates admin service archive payloads", () => {
+  assert.deepEqual(
+    validateAdminServiceCatalogArchiveInput({serviceId: "standard"}),
+    {serviceId: "standard"},
+  );
+  assert.throws(
+    () => validateAdminServiceCatalogArchiveInput({serviceId: "services/standard"}),
+    /path separators/,
+  );
 });
