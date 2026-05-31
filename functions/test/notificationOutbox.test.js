@@ -8,6 +8,7 @@ const {
   REVIEW_PROMPT_RESERVATION_STATUS_VALUES,
   adminNotificationOutboxDocId,
   buildAdminPendingBookingNotificationOutboxDocument,
+  buildAdminTestNotificationOutboxDocument,
   buildReservationNotificationOutboxDocument,
   enqueueAdminPendingBookingNotification,
   enqueueReservationNotification,
@@ -394,6 +395,66 @@ test("enqueueAdminPendingBookingNotification writes deterministic per-admin outb
     )}`,
     data: queued,
   });
+});
+
+test("buildAdminTestNotificationOutboxDocument queues current-admin test without token exposure", () => {
+  const payload = buildAdminTestNotificationOutboxDocument({
+    templateKey: "admin_pending_booking",
+    recipientUid: "admin-1",
+    actorUid: "admin-1",
+    settings: buildNotificationSettings(doc({
+      value: {
+        adminPendingAlertEnabled: true,
+        templates: [
+          {
+            key: "admin_pending_booking",
+            enabled: true,
+            title: "Teste {{reservationCode}}",
+            body: "{{customerName}} pediu {{serviceName}} para {{slotStart}}.",
+          },
+        ],
+      },
+    })),
+    timestamp: new Date("2026-06-01T08:00:00.000Z"),
+  });
+
+  assert.equal(payload.type, "admin_test_notification");
+  assert.equal(payload.templateKey, "admin_pending_booking");
+  assert.equal(payload.recipientUid, "admin-1");
+  assert.equal(payload.title, "Teste TESTE");
+  assert.equal(payload.body, "Cliente de teste pediu Lavagem completa para 2026-06-01 10:00.");
+  assert.equal(payload.notificationCreatedByUid, "admin-1");
+  assert.equal(payload.preferencesSnapshot.adminTestOnly, true);
+  assert.equal(Object.hasOwn(payload, "token"), false);
+});
+
+test("buildAdminTestNotificationOutboxDocument respects disabled settings", () => {
+  assert.equal(buildAdminTestNotificationOutboxDocument({
+    templateKey: "booking_reminder",
+    recipientUid: "admin-1",
+    settings: buildNotificationSettings(doc({
+      value: {
+        appointmentReminderEnabled: false,
+      },
+    })),
+  }), null);
+
+  assert.equal(buildAdminTestNotificationOutboxDocument({
+    templateKey: "booking_request",
+    recipientUid: "admin-1",
+    settings: buildNotificationSettings(doc({
+      value: {
+        templates: [
+          {
+            key: "booking_request",
+            enabled: false,
+            title: "Pedido",
+            body: "Recebido",
+          },
+        ],
+      },
+    })),
+  }), null);
 });
 
 test("isReviewPromptReservationDue requires owned completed past reservations", () => {

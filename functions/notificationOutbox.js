@@ -88,6 +88,23 @@ function reservationVariables(reservationId, reservation) {
   };
 }
 
+function adminTestNotificationVariables() {
+  return {
+    reservationId: "admin-test",
+    reservationCode: "TESTE",
+    customerName: "Cliente de teste",
+    customerEmail: "cliente.teste@example.com",
+    customerPhone: "+351 900 000 000",
+    serviceName: "Lavagem completa",
+    slotStart: "2026-06-01 10:00",
+    slotEnd: "2026-06-01 11:00",
+    previousSlotStart: "2026-06-01 09:00",
+    previousSlotEnd: "2026-06-01 10:00",
+    status: "teste",
+    rejectionReason: "Teste administrativo",
+  };
+}
+
 function isReviewPromptReservationDue(reservation, now = new Date()) {
   const customerUid = cleanReservationText(reservation?.customerUid, 128);
   if (!customerUid) return false;
@@ -246,6 +263,60 @@ function buildAdminPendingBookingNotificationOutboxDocument({
   };
 }
 
+function buildAdminTestNotificationOutboxDocument({
+  templateKey,
+  settings,
+  recipientUid,
+  actorUid = "",
+  timestamp = null,
+} = {}) {
+  const normalizedRecipientUid = cleanReservationText(recipientUid, 128);
+  const normalizedTemplateKey = cleanReservationText(templateKey, 80);
+  if (!normalizedRecipientUid || !normalizedTemplateKey) return null;
+  if (!isTemplateGloballyEnabled(settings, normalizedTemplateKey)) return null;
+
+  const template = templateForKey(settings, normalizedTemplateKey);
+  if (!template || template.enabled === false) return null;
+
+  const variables = adminTestNotificationVariables();
+  const title = interpolateTemplateText(template.title, variables);
+  const body = interpolateTemplateText(template.body, variables);
+  if (!title || !body) return null;
+
+  const now = timestamp || new Date();
+  const normalizedActorUid = cleanReservationText(actorUid, 128) || normalizedRecipientUid;
+  return {
+    type: "admin_test_notification",
+    templateKey: normalizedTemplateKey,
+    recipientUid: normalizedRecipientUid,
+    reservationId: variables.reservationId,
+    reservationCode: variables.reservationCode,
+    serviceName: variables.serviceName,
+    slotStart: variables.slotStart,
+    slotEnd: variables.slotEnd,
+    status: variables.status,
+    title,
+    body,
+    channels: ["push"],
+    deliveryState: "queued",
+    attemptCount: 0,
+    dedupeKey: `admin_test:${normalizedTemplateKey}:${normalizedRecipientUid}:${now.getTime()}`,
+    createdAt: now,
+    updatedAt: now,
+    createdByUid: normalizedActorUid,
+    notificationCreatedByUid: normalizedActorUid,
+    source: "admin-test-notification",
+    templateSnapshot: {
+      key: template.key,
+      title: template.title,
+      body: template.body,
+    },
+    preferencesSnapshot: {
+      adminTestOnly: true,
+    },
+  };
+}
+
 function enqueueReservationNotification(tx, {
   db,
   templateKey,
@@ -322,6 +393,7 @@ module.exports = {
   REVIEW_PROMPT_RESERVATION_STATUS_VALUES,
   adminNotificationOutboxDocId,
   buildAdminPendingBookingNotificationOutboxDocument,
+  buildAdminTestNotificationOutboxDocument,
   buildReservationNotificationOutboxDocument,
   enqueueAdminPendingBookingNotification,
   enqueueReservationNotification,

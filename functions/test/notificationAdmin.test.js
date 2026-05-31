@@ -4,6 +4,7 @@ const {
   TEMPLATE_KEYS,
   buildNotificationSettings,
   buildNotificationSettingsValue,
+  validateAdminNotificationTestInput,
   validateNotificationSettingsUpdateInput,
 } = require("../notificationAdmin");
 
@@ -150,6 +151,23 @@ test("validateNotificationSettingsUpdateInput rejects unsafe settings", () => {
         template),
     }),
     /booking_request body/,
+  );
+});
+
+test("validateAdminNotificationTestInput accepts only known template keys", () => {
+  assert.deepEqual(
+    validateAdminNotificationTestInput({templateKey: " booking_request "}),
+    {templateKey: "booking_request"},
+  );
+
+  assert.throws(
+    () => validateAdminNotificationTestInput({templateKey: "../booking_request"}),
+    /templateKey/,
+  );
+
+  assert.throws(
+    () => validateAdminNotificationTestInput({templateKey: "marketing_campaign"}),
+    /templateKey/,
   );
 });
 

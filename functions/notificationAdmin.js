@@ -264,6 +264,21 @@ function validateNotificationSettingsUpdateInput(data = {}) {
   };
 }
 
+function validateAdminNotificationTestInput(data = {}) {
+  if (!data || typeof data !== "object" || Array.isArray(data)) {
+    throw new HttpsError("invalid-argument", "Notification test payload is required");
+  }
+
+  const templateKey = String(data.templateKey || "").trim();
+  if (!TEMPLATE_KEYS.includes(templateKey)) {
+    throw new HttpsError("invalid-argument", "templateKey is invalid");
+  }
+
+  return {
+    templateKey,
+  };
+}
+
 function buildNotificationSettingsValue(settings) {
   return {
     bookingStatusEnabled: settings.bookingStatusEnabled,
@@ -289,5 +304,6 @@ module.exports = {
   TEMPLATE_KEYS,
   buildNotificationSettings,
   buildNotificationSettingsValue,
+  validateAdminNotificationTestInput,
   validateNotificationSettingsUpdateInput,
 };

@@ -95,6 +95,7 @@ const {
 const {
   buildNotificationSettings,
   buildNotificationSettingsValue,
+  validateAdminNotificationTestInput,
   validateNotificationSettingsUpdateInput,
 } = require("./notificationAdmin");
 const {
@@ -111,6 +112,7 @@ const {
   REVIEW_PROMPT_RESERVATION_STATUS_VALUES,
   enqueueAdminPendingBookingNotification,
   enqueueReservationNotification,
+  buildAdminTestNotificationOutboxDocument,
   isBookingReminderReservationDue,
   isReviewPromptReservationDue,
   notificationOutboxDocId,
@@ -1591,6 +1593,45 @@ exports.updateNotificationSettings = onCall(async (request) => {
   };
 });
 
+exports.sendAdminNotificationTest = onCall(async (request) => {
+  await assertAdminRequest(request);
+  const {templateKey} = validateAdminNotificationTestInput(request.data);
+  const recipientUid = request.auth.uid;
+
+  const hasActiveToken = await hasActiveNotificationTokenForUser(recipientUid);
+  if (!hasActiveToken) {
+    throw new HttpsError(
+      "failed-precondition",
+      "Register a notification device before sending a test notification",
+    );
+  }
+
+  const settingsSnap = await notificationSettingsRef().get();
+  const settings = buildNotificationSettings(settingsSnap);
+  const notification = buildAdminTestNotificationOutboxDocument({
+    templateKey,
+    settings,
+    recipientUid,
+    actorUid: recipientUid,
+    timestamp: new Date(),
+  });
+  if (!notification) {
+    throw new HttpsError("failed-precondition", "Notification template is disabled");
+  }
+
+  const notificationRef = db.collection(NOTIFICATION_OUTBOX_COLLECTION).doc();
+  await notificationRef.set(notification);
+
+  return {
+    queued: true,
+    notificationId: notificationRef.id,
+    templateKey: notification.templateKey,
+    deliveryState: notification.deliveryState,
+    recipientUid,
+    message: "Test notification queued for the current admin user",
+  };
+});
+
 exports.updateAvailabilityConfiguration = onCall(async (request) => {
   await assertAdminRequest(request);
   const availability = validateAvailabilityConfigurationInput(request.data);
@@ -2223,6 +2264,11 @@ async function activeNotificationTokenDeliveriesForUser(uid) {
   return tokenSnap.docs
     .map((snap) => notificationTokenDeliveryFromSnap(snap, uid))
     .filter(Boolean);
+}
+
+async function hasActiveNotificationTokenForUser(uid) {
+  const tokenDeliveries = await activeNotificationTokenDeliveriesForUser(uid);
+  return tokenDeliveries.length > 0;
 }
 
 async function revokeInvalidNotificationTokens(uid, invalidTokenIds) {
