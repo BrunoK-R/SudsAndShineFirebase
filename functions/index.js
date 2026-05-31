@@ -34,6 +34,13 @@ const {
   validateBusinessInfoUpdateInput,
 } = require("./businessInfo");
 const {
+  buildAdminAvailabilityConfig,
+  buildCapacityOverrideDocument,
+  validateAvailabilityConfigurationInput,
+  validateCapacityOverrideClearInput,
+  validateCapacityOverrideInput,
+} = require("./availabilityAdmin");
+const {
   buildUserReservationHistory,
 } = require("./reservationHistory");
 const {
@@ -1088,6 +1095,30 @@ exports.getAdminServiceExtras = onCall(async (request) => {
   return buildAdminServiceExtras(extrasSnap.docs);
 });
 
+exports.getAdminAvailabilityConfiguration = onCall(async (request) => {
+  await assertAdminRequest(request);
+
+  const [
+    directSnap,
+    keyedSnap,
+    defaultCapacitySnap,
+    capacityOverridesSnap,
+  ] = await Promise.all([
+    db.collection("business_settings").doc("business_info").get(),
+    db.collection("business_settings").where("key", "==", "business_info").limit(1).get(),
+    db.collection("business_settings").where("key", "==", "default_max_bookings_per_slot").limit(1).get(),
+    db.collection("capacity_overrides").orderBy("date").limit(120).get(),
+  ]);
+  const businessInfo = businessInfoFromSnapshots(directSnap, keyedSnap);
+  assertBusinessInfoReadable(businessInfo);
+
+  return buildAdminAvailabilityConfig({
+    businessInfo,
+    defaultCapacitySetting: defaultCapacitySnap.empty ? null : defaultCapacitySnap.docs[0].data(),
+    capacityOverrideDocs: capacityOverridesSnap.docs,
+  });
+});
+
 exports.updateBusinessInfo = onCall(async (request) => {
   await assertAdminRequest(request);
   const businessInfo = validateBusinessInfoUpdateInput(request.data);
@@ -1107,6 +1138,105 @@ exports.updateBusinessInfo = onCall(async (request) => {
   return {
     ...businessInfo,
     source: "firestore",
+  };
+});
+
+exports.updateAvailabilityConfiguration = onCall(async (request) => {
+  await assertAdminRequest(request);
+  const availability = validateAvailabilityConfigurationInput(request.data);
+
+  const [directSnap, keyedSnap] = await Promise.all([
+    db.collection("business_settings").doc("business_info").get(),
+    db.collection("business_settings").where("key", "==", "business_info").limit(1).get(),
+  ]);
+  const businessInfo = businessInfoFromSnapshots(directSnap, keyedSnap);
+  assertBusinessInfoReadable(businessInfo);
+  const updatedBusinessInfo = {
+    ...businessInfo,
+    openingHours: availability.openingHours,
+  };
+  const businessInfoValue = buildBusinessInfoSettingValue(updatedBusinessInfo);
+  const now = admin.firestore.FieldValue.serverTimestamp();
+  const batch = db.batch();
+
+  batch.set(
+    db.collection("business_settings").doc("business_info"),
+    {
+      key: "business_info",
+      value: businessInfoValue,
+      updatedAt: now,
+      updatedByUid: request.auth.uid,
+      updateSource: "admin-mobile-availability",
+    },
+    {merge: true},
+  );
+  batch.set(
+    db.collection("business_settings").doc("default_max_bookings_per_slot"),
+    {
+      key: "default_max_bookings_per_slot",
+      value: availability.defaultMaxBookingsPerSlot,
+      updatedAt: now,
+      updatedByUid: request.auth.uid,
+      updateSource: "admin-mobile-availability",
+    },
+    {merge: true},
+  );
+  await batch.commit();
+
+  const capacityOverridesSnap = await db.collection("capacity_overrides")
+    .orderBy("date")
+    .limit(120)
+    .get();
+
+  return buildAdminAvailabilityConfig({
+    businessInfo: updatedBusinessInfo,
+    defaultCapacitySetting: {value: availability.defaultMaxBookingsPerSlot},
+    capacityOverrideDocs: capacityOverridesSnap.docs,
+  });
+});
+
+exports.upsertCapacityOverride = onCall(async (request) => {
+  await assertAdminRequest(request);
+  const override = validateCapacityOverrideInput(request.data);
+
+  await db.collection("capacity_overrides").doc(override.date).set(
+    {
+      ...buildCapacityOverrideDocument(override, request.auth.uid),
+      updatedAt: admin.firestore.FieldValue.serverTimestamp(),
+    },
+    {merge: true},
+  );
+
+  return {
+    ok: true,
+    date: override.date,
+    maxBookingsPerSlot: override.maxBookingsPerSlot,
+    status: "updated",
+  };
+});
+
+exports.clearCapacityOverride = onCall(async (request) => {
+  await assertAdminRequest(request);
+  const override = validateCapacityOverrideClearInput(request.data);
+
+  await db.collection("capacity_overrides").doc(override.date).set(
+    {
+      date: override.date,
+      active: false,
+      maxBookingsPerSlot: admin.firestore.FieldValue.delete(),
+      clearedAt: admin.firestore.FieldValue.serverTimestamp(),
+      clearedByUid: request.auth.uid,
+      updatedAt: admin.firestore.FieldValue.serverTimestamp(),
+      updatedByUid: request.auth.uid,
+      updateSource: "admin-mobile-availability",
+    },
+    {merge: true},
+  );
+
+  return {
+    ok: true,
+    date: override.date,
+    status: "cleared",
   };
 });
 

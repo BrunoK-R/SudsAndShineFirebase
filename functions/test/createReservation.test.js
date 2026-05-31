@@ -366,3 +366,13 @@ test("buildAvailabilityMonth uses configured business opening hours", () => {
   assert.deepEqual(may23.slots, []);
   assert.equal(may23.available, false);
 });
+
+test("resolveCapacityLimit ignores cleared capacity overrides", () => {
+  assert.equal(
+    resolveCapacityLimit(
+      {key: "default_max_bookings_per_slot", value: 3},
+      {date: "2026-06-10", active: false, maxBookingsPerSlot: 0},
+    ),
+    3,
+  );
+});

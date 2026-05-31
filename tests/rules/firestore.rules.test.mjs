@@ -151,6 +151,24 @@ test('only staff can read reservations and blocked slots', async () => {
   await assertFails(getDoc(doc(unauthDb(), 'blocked_slots', 'b-1')));
 });
 
+test('capacity overrides are staff-readable and admin-writable only', async () => {
+  await seedDoc('capacity_overrides', '2026-06-10', {
+    date: '2026-06-10',
+    maxBookingsPerSlot: 4,
+  });
+
+  await assertSucceeds(getDoc(doc(staffDb(), 'capacity_overrides', '2026-06-10')));
+  await assertFails(getDoc(doc(unauthDb(), 'capacity_overrides', '2026-06-10')));
+  await assertFails(setDoc(doc(staffDb(), 'capacity_overrides', '2026-06-11'), {
+    date: '2026-06-11',
+    maxBookingsPerSlot: 0,
+  }));
+  await assertSucceeds(setDoc(doc(adminDb(), 'capacity_overrides', '2026-06-11'), {
+    date: '2026-06-11',
+    maxBookingsPerSlot: 0,
+  }));
+});
+
 test('only staff can read and write reservation reviews directly', async () => {
   await seedDoc('reservation_reviews', 'review-1', {
     reservationId: 'r-1',

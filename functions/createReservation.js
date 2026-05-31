@@ -240,6 +240,7 @@ function readDefaultCapacityFromSetting(setting) {
 
 function readOverrideCapacity(override) {
   if (!override || typeof override !== "object") return null;
+  if (override.active === false) return null;
 
   const camel = parseCapacityValue(override.maxBookingsPerSlot);
   if (camel !== null) return camel;
