@@ -241,6 +241,38 @@ test('users can only manage their own notification preferences and tokens', asyn
   await assertSucceeds(deleteDoc(doc(userDb('user-1'), 'users', 'user-1', 'notification_tokens', 'token-2')));
 });
 
+test('notification outbox is hidden from all direct clients', async () => {
+  const now = Timestamp.fromDate(new Date());
+  await seedDoc('notification_outbox', 'booking_accepted_reservation-1', {
+    type: 'booking_status',
+    templateKey: 'booking_accepted',
+    recipientUid: 'user-1',
+    reservationId: 'reservation-1',
+    deliveryState: 'queued',
+    title: 'Confirmed',
+    body: 'Your booking is confirmed.',
+    createdAt: now,
+    updatedAt: now,
+    source: 'booking-lifecycle',
+  });
+
+  await assertFails(getDoc(doc(unauthDb(), 'notification_outbox', 'booking_accepted_reservation-1')));
+  await assertFails(getDoc(doc(userDb('user-1'), 'notification_outbox', 'booking_accepted_reservation-1')));
+  await assertFails(getDoc(doc(staffDb(), 'notification_outbox', 'booking_accepted_reservation-1')));
+  await assertFails(getDoc(doc(adminDb(), 'notification_outbox', 'booking_accepted_reservation-1')));
+  await assertFails(setDoc(doc(adminDb(), 'notification_outbox', 'manual'), {
+    type: 'booking_status',
+    templateKey: 'booking_accepted',
+    recipientUid: 'user-1',
+    reservationId: 'reservation-1',
+    deliveryState: 'queued',
+    title: 'Manual',
+    body: 'Manual write',
+    createdAt: now,
+    updatedAt: now,
+  }));
+});
+
 test('public reservation create is allowed only with valid payload shape', async () => {
   const db = unauthDb();
   const goodPayload = validReservationPayload();

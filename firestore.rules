@@ -183,6 +183,10 @@ service cloud.firestore {
       allow read, write: if isStaff();
     }
 
+    match /notification_outbox/{docId} {
+      allow read, write: if false;
+    }
+
     match /users/{userId} {
       allow read, write: if false;
 

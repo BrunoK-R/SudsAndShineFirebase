@@ -105,6 +105,9 @@ const {
   validateNotificationTokenRegistrationInput,
   validateUserNotificationPreferencesInput,
 } = require("./notificationPreferences");
+const {
+  enqueueReservationNotification,
+} = require("./notificationOutbox");
 
 admin.initializeApp();
 const db = admin.firestore();
@@ -364,6 +367,8 @@ exports.createReservation = onCall(async (request) => {
         .where("rewardCode", "==", data.loyaltyRewardCode)
         .limit(1) :
       null;
+    const notificationPreferencesRef = authenticatedUid ? userNotificationPreferencesRef(authenticatedUid) : null;
+    const notificationUserRef = authenticatedUid ? userDocument(authenticatedUid) : null;
 
     const [
       reservationsSnap,
@@ -377,6 +382,9 @@ exports.createReservation = onCall(async (request) => {
       extrasSnap,
       userVehicleSnap,
       loyaltyRewardSnap,
+      notificationSettingsSnap,
+      notificationPreferencesSnap,
+      notificationUserSnap,
     ] = await Promise.all([
       tx.get(reservationsQuery),
       tx.get(blockedQuery),
@@ -389,6 +397,9 @@ exports.createReservation = onCall(async (request) => {
       tx.get(extrasQuery),
       userVehicleRef ? tx.get(userVehicleRef) : Promise.resolve(null),
       loyaltyRewardQuery ? tx.get(loyaltyRewardQuery) : Promise.resolve(null),
+      authenticatedUid ? tx.get(notificationSettingsRef()) : Promise.resolve(null),
+      notificationPreferencesRef ? tx.get(notificationPreferencesRef) : Promise.resolve(null),
+      notificationUserRef ? tx.get(notificationUserRef) : Promise.resolve(null),
     ]);
 
     const capacityOverride = capacityOverrideSnap.empty ? null : capacityOverrideSnap.docs[0].data();
@@ -451,8 +462,7 @@ exports.createReservation = onCall(async (request) => {
     }
 
     const paymentStatus = loyaltyReward && priceCents === 0 ? "covered_by_loyalty" : "pending";
-
-    tx.set(reservationRef, {
+    const reservationDocument = {
       reservationCode,
       customerName: data.customerName,
       customerEmail: data.customerEmail,
@@ -490,7 +500,9 @@ exports.createReservation = onCall(async (request) => {
       createdAt: admin.firestore.FieldValue.serverTimestamp(),
       updatedAt: admin.firestore.FieldValue.serverTimestamp(),
       source: "public-booking",
-    });
+    };
+
+    tx.set(reservationRef, reservationDocument);
 
     if (loyaltyReward) {
       tx.update(loyaltyReward.ref, {
@@ -499,6 +511,19 @@ exports.createReservation = onCall(async (request) => {
         reservationId: reservationRef.id,
         reservationCode,
         updatedAt: admin.firestore.FieldValue.serverTimestamp(),
+      });
+    }
+    if (authenticatedUid) {
+      enqueueReservationNotification(tx, {
+        db,
+        templateKey: "booking_request",
+        reservationId: reservationRef.id,
+        reservation: reservationDocument,
+        notificationSettingsSnap,
+        userPreferencesSnap: notificationPreferencesSnap,
+        userDocSnap: notificationUserSnap,
+        actorUid: authenticatedUid,
+        timestamp: admin.firestore.FieldValue.serverTimestamp(),
       });
     }
 
@@ -1680,6 +1705,16 @@ exports.acceptReservation = onCall(async (request) => {
   await db.runTransaction(async (tx) => {
     const reservationSnap = await tx.get(reservationRef);
     const reservationData = assertPendingReservationActionable({reservationSnap});
+    const customerUid = String(reservationData.customerUid || "").trim();
+    const [
+      notificationSettingsSnap,
+      notificationPreferencesSnap,
+      notificationUserSnap,
+    ] = customerUid ? await Promise.all([
+      tx.get(notificationSettingsRef()),
+      tx.get(userNotificationPreferencesRef(customerUid)),
+      tx.get(userDocument(customerUid)),
+    ]) : [null, null, null];
 
     reservationCode = String(reservationData.reservationCode || "").trim();
     tx.update(reservationRef, {
@@ -1689,6 +1724,20 @@ exports.acceptReservation = onCall(async (request) => {
       updatedAt: admin.firestore.FieldValue.serverTimestamp(),
     });
     redeemReservedLoyaltyReward(tx, reservationData, data.reservationId);
+    enqueueReservationNotification(tx, {
+      db,
+      templateKey: "booking_accepted",
+      reservationId: data.reservationId,
+      reservation: {
+        ...reservationData,
+        status: "confirmed",
+      },
+      notificationSettingsSnap,
+      userPreferencesSnap: notificationPreferencesSnap,
+      userDocSnap: notificationUserSnap,
+      actorUid: request.auth.uid,
+      timestamp: admin.firestore.FieldValue.serverTimestamp(),
+    });
   });
 
   return {
@@ -1708,6 +1757,16 @@ exports.rejectReservation = onCall(async (request) => {
   await db.runTransaction(async (tx) => {
     const reservationSnap = await tx.get(reservationRef);
     const reservationData = assertPendingReservationActionable({reservationSnap});
+    const customerUid = String(reservationData.customerUid || "").trim();
+    const [
+      notificationSettingsSnap,
+      notificationPreferencesSnap,
+      notificationUserSnap,
+    ] = customerUid ? await Promise.all([
+      tx.get(notificationSettingsRef()),
+      tx.get(userNotificationPreferencesRef(customerUid)),
+      tx.get(userDocument(customerUid)),
+    ]) : [null, null, null];
     const update = {
       status: "rejected",
       rejectedAt: admin.firestore.FieldValue.serverTimestamp(),
@@ -1723,6 +1782,21 @@ exports.rejectReservation = onCall(async (request) => {
     reservationCode = String(reservationData.reservationCode || "").trim();
     tx.update(reservationRef, update);
     releaseReservedLoyaltyReward(tx, reservationData);
+    enqueueReservationNotification(tx, {
+      db,
+      templateKey: "booking_rejected",
+      reservationId: data.reservationId,
+      reservation: {
+        ...reservationData,
+        status: "rejected",
+        rejectionReason: data.rejectionReason,
+      },
+      notificationSettingsSnap,
+      userPreferencesSnap: notificationPreferencesSnap,
+      userDocSnap: notificationUserSnap,
+      actorUid: request.auth.uid,
+      timestamp: admin.firestore.FieldValue.serverTimestamp(),
+    });
   });
 
   return {
@@ -1802,12 +1876,36 @@ exports.expirePendingReservations = onSchedule("every 60 minutes", async () => {
       if (!freshSnap.exists || !isExpiredPendingReservation(freshSnap.data(), now)) return;
 
       const reservationData = freshSnap.data() || {};
+      const customerUid = String(reservationData.customerUid || "").trim();
+      const [
+        notificationSettingsSnap,
+        notificationPreferencesSnap,
+        notificationUserSnap,
+      ] = customerUid ? await Promise.all([
+        tx.get(notificationSettingsRef()),
+        tx.get(userNotificationPreferencesRef(customerUid)),
+        tx.get(userDocument(customerUid)),
+      ]) : [null, null, null];
       tx.update(docSnap.ref, {
         status: "expired",
         expiredAt: admin.firestore.FieldValue.serverTimestamp(),
         updatedAt: admin.firestore.FieldValue.serverTimestamp(),
       });
       releaseReservedLoyaltyReward(tx, reservationData);
+      enqueueReservationNotification(tx, {
+        db,
+        templateKey: "booking_expired",
+        reservationId: docSnap.id,
+        reservation: {
+          ...reservationData,
+          status: "expired",
+        },
+        notificationSettingsSnap,
+        userPreferencesSnap: notificationPreferencesSnap,
+        userDocSnap: notificationUserSnap,
+        actorUid: "system",
+        timestamp: admin.firestore.FieldValue.serverTimestamp(),
+      });
       expiredCount += 1;
     });
   }
