@@ -112,6 +112,17 @@ const {
   isReviewPromptReservationDue,
   notificationOutboxDocId,
 } = require("./notificationOutbox");
+const {
+  MAX_DELIVERY_ATTEMPTS,
+  MAX_DELIVERY_TOKENS_PER_USER,
+  buildNotificationPushMessage,
+  deliveryCompletionUpdate,
+  deliveryFailureUpdate,
+  isNotificationOutboxDeliverable,
+  isNotificationSendingLeaseExpired,
+  nextDeliveryLeaseExpiration,
+  notificationTokenDeliveryFromSnap,
+} = require("./notificationDelivery");
 
 admin.initializeApp();
 const db = admin.firestore();
@@ -2029,6 +2040,172 @@ exports.queueReviewPromptNotifications = onSchedule("every 60 minutes", async ()
   }
 
   logger.info("Queued review prompt notifications", {queuedCount});
+});
+
+async function claimNotificationOutboxDelivery(docSnap, now = new Date()) {
+  return db.runTransaction(async (tx) => {
+    const freshSnap = await tx.get(docSnap.ref);
+    if (!freshSnap.exists) return null;
+
+    const outbox = freshSnap.data() || {};
+    if (!isNotificationOutboxDeliverable(outbox)) return null;
+    if (!isNotificationSendingLeaseExpired(outbox, now)) return null;
+
+    const previousAttemptCount = Number.isFinite(outbox.attemptCount) ?
+      Math.max(0, Math.floor(outbox.attemptCount)) :
+      0;
+    const serverNow = admin.firestore.FieldValue.serverTimestamp();
+    if (previousAttemptCount >= MAX_DELIVERY_ATTEMPTS) {
+      tx.update(freshSnap.ref, {
+        deliveryState: "failed",
+        deliveryLeaseExpiresAt: null,
+        deliveryFailureReason: "max-attempts-exceeded",
+        failedAt: serverNow,
+        updatedAt: serverNow,
+      });
+      return null;
+    }
+
+    const attemptCount = previousAttemptCount + 1;
+    tx.update(freshSnap.ref, {
+      deliveryState: "sending",
+      attemptCount,
+      lastAttemptAt: serverNow,
+      deliveryLeaseExpiresAt: admin.firestore.Timestamp.fromDate(nextDeliveryLeaseExpiration(now)),
+      updatedAt: serverNow,
+    });
+
+    return {
+      ref: freshSnap.ref,
+      attemptCount,
+      outbox: {
+        ...outbox,
+        attemptCount,
+      },
+    };
+  });
+}
+
+async function activeNotificationTokenDeliveriesForUser(uid) {
+  const tokenSnap = await userNotificationTokensCollection(uid)
+    .where("enabled", "==", true)
+    .limit(MAX_DELIVERY_TOKENS_PER_USER)
+    .get();
+  return tokenSnap.docs
+    .map((snap) => notificationTokenDeliveryFromSnap(snap, uid))
+    .filter(Boolean);
+}
+
+async function revokeInvalidNotificationTokens(uid, invalidTokenIds) {
+  if (!invalidTokenIds.length) return;
+
+  const now = admin.firestore.FieldValue.serverTimestamp();
+  const batch = db.batch();
+  for (const tokenId of invalidTokenIds) {
+    batch.set(
+      userNotificationTokensCollection(uid).doc(tokenId),
+      {
+        enabled: false,
+        token: admin.firestore.FieldValue.delete(),
+        revokedAt: now,
+        updatedAt: now,
+        updateSource: "push-delivery-invalid-token",
+      },
+      {merge: true},
+    );
+  }
+  await batch.commit();
+}
+
+async function processNotificationOutboxDocument(docSnap) {
+  const claimed = await claimNotificationOutboxDelivery(docSnap);
+  if (!claimed) return {state: "skipped"};
+
+  const serverNow = admin.firestore.FieldValue.serverTimestamp();
+  const recipientUid = String(claimed.outbox.recipientUid || "").trim();
+  const tokenDeliveries = await activeNotificationTokenDeliveriesForUser(recipientUid);
+
+  if (!tokenDeliveries.length) {
+    await claimed.ref.update({
+      ...deliveryFailureUpdate({
+        reason: "no-active-tokens",
+        error: {code: "no-active-tokens", message: "No active notification tokens"},
+        attemptCount: claimed.attemptCount,
+        timestamp: serverNow,
+      }),
+      attemptCount: claimed.attemptCount,
+    });
+    return {state: "failed", reason: "no-active-tokens"};
+  }
+
+  try {
+    const response = await admin.messaging().sendEachForMulticast(
+      buildNotificationPushMessage(claimed.outbox, tokenDeliveries),
+    );
+    const {outboxUpdate, invalidTokenIds} = deliveryCompletionUpdate({
+      response,
+      tokenDeliveries,
+      attemptCount: claimed.attemptCount,
+      timestamp: serverNow,
+    });
+
+    await Promise.all([
+      claimed.ref.update({
+        ...outboxUpdate,
+        attemptCount: claimed.attemptCount,
+      }),
+      revokeInvalidNotificationTokens(recipientUid, invalidTokenIds),
+    ]);
+
+    return {
+      state: outboxUpdate.deliveryState,
+      successCount: outboxUpdate.deliveryResult.successCount,
+      failureCount: outboxUpdate.deliveryResult.failureCount,
+      invalidTokenCount: invalidTokenIds.length,
+    };
+  } catch (error) {
+    const outboxUpdate = deliveryFailureUpdate({
+      reason: "messaging-send-failed",
+      error,
+      attemptCount: claimed.attemptCount,
+      timestamp: serverNow,
+    });
+    await claimed.ref.update({
+      ...outboxUpdate,
+      attemptCount: claimed.attemptCount,
+    });
+    logger.warn("Notification outbox delivery attempt failed", {
+      outboxId: docSnap.id,
+      code: error?.code || error?.errorInfo?.code || "unknown",
+    });
+    return {state: outboxUpdate.deliveryState, reason: "messaging-send-failed"};
+  }
+}
+
+exports.processNotificationOutbox = onSchedule("every 5 minutes", async () => {
+  const outboxSnap = await db.collection(NOTIFICATION_OUTBOX_COLLECTION)
+    .where("deliveryState", "in", ["queued", "retry", "sending"])
+    .limit(100)
+    .get();
+
+  const summary = {
+    scannedCount: outboxSnap.size,
+    sentCount: 0,
+    queuedCount: 0,
+    failedCount: 0,
+    skippedCount: 0,
+  };
+
+  for (const docSnap of outboxSnap.docs) {
+    const result = await processNotificationOutboxDocument(docSnap);
+    if (result.state === "sent") summary.sentCount += 1;
+    else if (result.state === "queued") summary.queuedCount += 1;
+    else if (result.state === "failed") summary.failedCount += 1;
+    else summary.skippedCount += 1;
+  }
+
+  logger.info("Processed notification outbox", summary);
+  return summary;
 });
 
 exports.health = onRequest((req, res) => {

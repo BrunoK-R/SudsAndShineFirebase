@@ -1,0 +1,200 @@
+const test = require("node:test");
+const assert = require("node:assert/strict");
+const {
+  MAX_DELIVERY_ATTEMPTS,
+  buildNotificationPushMessage,
+  deliveryCompletionUpdate,
+  deliveryFailureUpdate,
+  isNotificationOutboxDeliverable,
+  isNotificationSendingLeaseExpired,
+  nextDeliveryLeaseExpiration,
+  notificationTokenDeliveryFromSnap,
+} = require("../notificationDelivery");
+
+test("notificationTokenDeliveryFromSnap returns only active owner-scoped tokens", () => {
+  assert.deepEqual(notificationTokenDeliveryFromSnap(tokenDoc("current-device", {
+    ownerUid: "user-1",
+    tokenId: "ignored-data-id",
+    token: "fcm_token_1234567890",
+    platform: "android",
+    enabled: true,
+  }), "user-1"), {
+    tokenId: "current-device",
+    token: "fcm_token_1234567890",
+    platform: "android",
+  });
+
+  assert.equal(notificationTokenDeliveryFromSnap(tokenDoc("other-device", {
+    ownerUid: "user-2",
+    token: "fcm_token_1234567890",
+    enabled: true,
+  }), "user-1"), null);
+  assert.equal(notificationTokenDeliveryFromSnap(tokenDoc("disabled-device", {
+    ownerUid: "user-1",
+    token: "fcm_token_1234567890",
+    enabled: false,
+  }), "user-1"), null);
+  assert.equal(notificationTokenDeliveryFromSnap(tokenDoc("revoked-device", {
+    ownerUid: "user-1",
+    token: "fcm_token_1234567890",
+    revokedAt: new Date("2026-05-31T18:00:00.000Z"),
+  }), "user-1"), null);
+  assert.equal(notificationTokenDeliveryFromSnap(tokenDoc("bad-device", {
+    ownerUid: "user-1",
+    token: "fcm token with spaces",
+    enabled: true,
+  }), "user-1"), null);
+});
+
+test("buildNotificationPushMessage builds token-scoped booking payload", () => {
+  const message = buildNotificationPushMessage(outbox(), [
+    {tokenId: "device-1", token: "fcm_token_1234567890", platform: "android"},
+  ]);
+
+  assert.deepEqual(message.tokens, ["fcm_token_1234567890"]);
+  assert.deepEqual(message.notification, {
+    title: "Marcação confirmada",
+    body: "A sua marcação foi confirmada.",
+  });
+  assert.equal(message.data.type, "booking_status");
+  assert.equal(message.data.templateKey, "booking_accepted");
+  assert.equal(message.data.reservationId, "reservation-1");
+  assert.equal(message.data.source, "notification_outbox");
+  assert.equal(message.android.priority, "high");
+  assert.equal(message.apns.payload.aps.sound, "default");
+});
+
+test("deliveryCompletionUpdate marks sent attempts and returns invalid token ids", () => {
+  const result = deliveryCompletionUpdate({
+    tokenDeliveries: [
+      {tokenId: "device-1", token: "fcm_token_success", platform: "android"},
+      {tokenId: "device-2", token: "fcm_token_invalid", platform: "ios"},
+    ],
+    response: {
+      responses: [
+        {success: true},
+        {
+          success: false,
+          error: {
+            code: "messaging/registration-token-not-registered",
+            message: "Token no longer exists",
+          },
+        },
+      ],
+    },
+    attemptCount: 1,
+    timestamp: new Date("2026-05-31T18:05:00.000Z"),
+  });
+
+  assert.equal(result.outboxUpdate.deliveryState, "sent");
+  assert.equal(result.outboxUpdate.deliveryResult.successCount, 1);
+  assert.equal(result.outboxUpdate.deliveryResult.failureCount, 1);
+  assert.equal(result.outboxUpdate.deliveryResult.invalidTokenCount, 1);
+  assert.deepEqual(result.invalidTokenIds, ["device-2"]);
+  assert.equal(result.outboxUpdate.failedAt, undefined);
+});
+
+test("deliveryCompletionUpdate retries transient all-token failures until max attempts", () => {
+  const retry = deliveryCompletionUpdate({
+    tokenDeliveries: [
+      {tokenId: "device-1", token: "fcm_token_retry", platform: "android"},
+    ],
+    response: {
+      responses: [
+        {
+          success: false,
+          error: {
+            code: "messaging/server-unavailable",
+            message: "Try later",
+          },
+        },
+      ],
+    },
+    attemptCount: MAX_DELIVERY_ATTEMPTS - 1,
+  });
+  const final = deliveryCompletionUpdate({
+    tokenDeliveries: [
+      {tokenId: "device-1", token: "fcm_token_retry", platform: "android"},
+    ],
+    response: retryResponse(),
+    attemptCount: MAX_DELIVERY_ATTEMPTS,
+  });
+
+  assert.equal(retry.outboxUpdate.deliveryState, "queued");
+  assert.equal(retry.outboxUpdate.deliveryResult.retryableFailureCount, 1);
+  assert.equal(final.outboxUpdate.deliveryState, "failed");
+  assert.equal(final.outboxUpdate.deliveryFailureReason, "messaging/server-unavailable");
+});
+
+test("deliveryFailureUpdate fails missing-token deliveries without retry", () => {
+  const update = deliveryFailureUpdate({
+    reason: "no-active-tokens",
+    error: {code: "no-active-tokens", message: "No active notification tokens"},
+    attemptCount: 1,
+    timestamp: new Date("2026-05-31T18:10:00.000Z"),
+  });
+
+  assert.equal(update.deliveryState, "failed");
+  assert.equal(update.deliveryFailureReason, "no-active-tokens");
+  assert.equal(update.deliveryResult.lastErrorCode, "no-active-tokens");
+});
+
+test("outbox deliverability and sending leases are bounded", () => {
+  assert.equal(isNotificationOutboxDeliverable(outbox()), true);
+  assert.equal(isNotificationOutboxDeliverable({
+    ...outbox(),
+    channels: ["email"],
+  }), false);
+  assert.equal(isNotificationSendingLeaseExpired({
+    ...outbox(),
+    deliveryState: "sending",
+    deliveryLeaseExpiresAt: new Date("2026-05-31T18:10:00.000Z"),
+  }, new Date("2026-05-31T18:09:00.000Z")), false);
+  assert.equal(isNotificationSendingLeaseExpired({
+    ...outbox(),
+    deliveryState: "sending",
+    deliveryLeaseExpiresAt: new Date("2026-05-31T18:10:00.000Z"),
+  }, new Date("2026-05-31T18:11:00.000Z")), true);
+
+  const lease = nextDeliveryLeaseExpiration(new Date("2026-05-31T18:00:00.000Z"));
+  assert.equal(lease.toISOString(), "2026-05-31T18:10:00.000Z");
+});
+
+function retryResponse() {
+  return {
+    responses: [
+      {
+        success: false,
+        error: {
+          code: "messaging/server-unavailable",
+          message: "Try later",
+        },
+      },
+    ],
+  };
+}
+
+function outbox(overrides = {}) {
+  return {
+    type: "booking_status",
+    templateKey: "booking_accepted",
+    recipientUid: "user-1",
+    reservationId: "reservation-1",
+    reservationCode: "SS-ABCDEFGH",
+    title: "Marcação confirmada",
+    body: "A sua marcação foi confirmada.",
+    channels: ["push"],
+    deliveryState: "queued",
+    attemptCount: 0,
+    dedupeKey: "booking_accepted:reservation-1",
+    ...overrides,
+  };
+}
+
+function tokenDoc(id, data) {
+  return {
+    id,
+    exists: true,
+    data: () => data,
+  };
+}
