@@ -19,6 +19,7 @@ const {
 } = require("./createReservation");
 const {
   assertCatalogReadable,
+  buildAdminServiceCatalog,
   buildServiceCatalog,
   validateAdminServiceCatalogArchiveInput,
   validateAdminServiceCatalogItemInput,
@@ -1068,6 +1069,13 @@ exports.getAdminBusinessInfo = onCall(async (request) => {
   const businessInfo = businessInfoFromSnapshots(directSnap, keyedSnap);
   assertBusinessInfoReadable(businessInfo);
   return businessInfo;
+});
+
+exports.getAdminServiceCatalog = onCall(async (request) => {
+  await assertAdminRequest(request);
+
+  const servicesSnap = await db.collection("services").get();
+  return buildAdminServiceCatalog(servicesSnap.docs);
 });
 
 exports.updateBusinessInfo = onCall(async (request) => {

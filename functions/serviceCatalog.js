@@ -172,6 +172,32 @@ function normalizeServiceDocument(docId, data) {
   };
 }
 
+function normalizeAdminServiceDocument(docId, data) {
+  if (!data || typeof data !== "object") return null;
+
+  const id = String(data.id || docId || "").trim();
+  const name = String(data.name || data.title || "").trim();
+  if (!id || !name) return null;
+
+  const durationMinutes = parseDurationMinutes(data.durationMinutes || data.duration, 30);
+  const passengerPriceCents = readPrice(data, "passenger", 0);
+  const suvPriceCents = readPrice(data, "suv", passengerPriceCents);
+  const active = data.active === false || data.enabled === false ? false : true;
+
+  return {
+    id,
+    name,
+    description: String(data.description || data.subtitle || "").trim(),
+    durationMinutes,
+    passengerPriceCents,
+    suvPriceCents,
+    iconKey: String(data.iconKey || data.icon || "car").trim() || "car",
+    popular: data.popular === true || data.featured === true,
+    active,
+    sortOrder: Number.isFinite(Number(data.sortOrder)) ? Number(data.sortOrder) : 999,
+  };
+}
+
 function normalizeExtraDocument(docId, data) {
   if (!data || typeof data !== "object") return null;
   if (data.active === false) return null;
@@ -199,6 +225,31 @@ function normalizeSortedDocs(docs, normalize) {
       return left.name.localeCompare(right.name, "pt");
     })
     .map(({sortOrder, ...item}) => item);
+}
+
+function buildAdminServiceCatalog(serviceDocs = []) {
+  const services = (serviceDocs || [])
+    .map((doc) => normalizeAdminServiceDocument(doc.id, doc.data()))
+    .filter(Boolean)
+    .sort((left, right) => {
+      if (left.sortOrder !== right.sortOrder) return left.sortOrder - right.sortOrder;
+      return left.name.localeCompare(right.name, "pt");
+    });
+
+  if (services.length > 0) {
+    return {
+      services,
+      source: "firestore",
+    };
+  }
+
+  return {
+    services: DEFAULT_SERVICES.map((service) => ({
+      ...service,
+      active: true,
+    })),
+    source: "default",
+  };
 }
 
 function buildServiceCatalog(serviceDocs, extraDocs = []) {
@@ -357,7 +408,9 @@ module.exports = {
   DEFAULT_EXTRAS,
   DEFAULT_SERVICES,
   assertCatalogReadable,
+  buildAdminServiceCatalog,
   buildServiceCatalog,
+  normalizeAdminServiceDocument,
   normalizeExtraDocument,
   normalizeServiceDocument,
   parseDurationMinutes,

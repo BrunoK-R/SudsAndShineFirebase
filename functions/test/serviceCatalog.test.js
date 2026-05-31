@@ -3,7 +3,9 @@ const assert = require("node:assert/strict");
 const {
   DEFAULT_EXTRAS,
   DEFAULT_SERVICES,
+  buildAdminServiceCatalog,
   buildServiceCatalog,
+  normalizeAdminServiceDocument,
   normalizeExtraDocument,
   normalizeServiceDocument,
   parseDurationMinutes,
@@ -95,6 +97,57 @@ test("buildServiceCatalog omits disabled service documents", () => {
   ]);
 
   assert.deepEqual(catalog.services.map((service) => service.id), ["enabled"]);
+});
+
+test("buildAdminServiceCatalog includes inactive services with admin metadata", () => {
+  const inactive = normalizeAdminServiceDocument("disabled", {
+    title: " Lavagem Desativada ",
+    duration: "45 min",
+    passengerPrice: "32,00€",
+    suvPriceCents: 3400,
+    icon: "sparkles",
+    featured: true,
+    enabled: false,
+    sortOrder: "3",
+  });
+
+  assert.equal(inactive.id, "disabled");
+  assert.equal(inactive.name, "Lavagem Desativada");
+  assert.equal(inactive.active, false);
+  assert.equal(inactive.sortOrder, 3);
+
+  const catalog = buildAdminServiceCatalog([
+    doc("enabled", {
+      name: "Enabled",
+      enabled: true,
+      durationMinutes: 30,
+      passengerPriceCents: 2500,
+      sortOrder: 2,
+    }),
+    doc("disabled", {
+      name: "Disabled",
+      enabled: false,
+      durationMinutes: 30,
+      passengerPriceCents: 2500,
+      sortOrder: 1,
+    }),
+  ]);
+
+  assert.equal(catalog.source, "firestore");
+  assert.deepEqual(catalog.services.map((service) => service.id), ["disabled", "enabled"]);
+  assert.equal(catalog.services[0].active, false);
+  assert.equal(catalog.services[0].sortOrder, 1);
+});
+
+test("buildAdminServiceCatalog falls back to default active services", () => {
+  const catalog = buildAdminServiceCatalog([]);
+
+  assert.equal(catalog.source, "default");
+  assert.deepEqual(
+    catalog.services.map((service) => service.id),
+    DEFAULT_SERVICES.map((service) => service.id),
+  );
+  assert.equal(catalog.services.every((service) => service.active), true);
 });
 
 test("buildServiceCatalog falls back to default services when Firestore is empty", () => {
