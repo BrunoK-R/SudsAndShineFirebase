@@ -1,6 +1,15 @@
 const {HttpsError} = require("firebase-functions/v2/https");
 
 const DEFAULT_REWARD_INTERVAL = 10;
+const DEFAULT_LOYALTY_SETTINGS = {
+  stampsRequired: DEFAULT_REWARD_INTERVAL,
+  rewardType: "free_wash",
+  rewardValue: 1,
+  rewardDescription: "1 lavagem grátis",
+  rewardValueCents: 0,
+  rewardLabel: "Lavagem grátis",
+  rewardTerms: "A recompensa cobre o serviço base; extras são pagos à parte.",
+};
 const USER_REDEMPTION_LIMIT = 100;
 
 const CANCELLED_STATUS_VALUES = [
@@ -77,6 +86,11 @@ function normalizeRedemptionDocument(doc) {
     rewardCode: String(data.rewardCode || "").trim(),
     rewardNumber: Number.isInteger(rewardNumber) && rewardNumber > 0 ? rewardNumber : null,
     status,
+    rewardType: normalizeRewardType(data.rewardType || data.reward_type),
+    rewardValue: normalizeRewardValue(data.rewardValue ?? data.reward_value),
+    rewardDescription: normalizeRewardDescription(data.rewardDescription || data.reward_description),
+    rewardValueCents: normalizeRewardValueCents(data.rewardValueCents ?? data.reward_value_cents),
+    rewardLabel: normalizeRewardLabel(data.rewardLabel || data.reward_label),
     createdAt: timestampToIsoString(data.createdAt),
   };
 }
@@ -112,6 +126,39 @@ function normalizeRewardCodeInput(value) {
     .slice(0, 80);
 }
 
+function normalizeRewardType(value) {
+  return String(value || DEFAULT_LOYALTY_SETTINGS.rewardType)
+    .trim()
+    .toLowerCase()
+    .replace(/-/g, "_") || DEFAULT_LOYALTY_SETTINGS.rewardType;
+}
+
+function normalizeRewardValueCents(value) {
+  const parsed = Number(value);
+  if (!Number.isFinite(parsed)) return DEFAULT_LOYALTY_SETTINGS.rewardValueCents;
+  return Math.max(0, Math.min(100000, Math.floor(parsed)));
+}
+
+function normalizeRewardValue(value) {
+  const parsed = Number(value);
+  if (!Number.isFinite(parsed)) return DEFAULT_LOYALTY_SETTINGS.rewardValue;
+  return Math.max(1, Math.min(100000, Math.floor(parsed)));
+}
+
+function normalizeRewardLabel(value) {
+  return String(value || DEFAULT_LOYALTY_SETTINGS.rewardLabel)
+    .trim()
+    .replace(/\s+/g, " ")
+    .slice(0, 120) || DEFAULT_LOYALTY_SETTINGS.rewardLabel;
+}
+
+function normalizeRewardDescription(value) {
+  return String(value || DEFAULT_LOYALTY_SETTINGS.rewardDescription)
+    .trim()
+    .replace(/\s+/g, " ")
+    .slice(0, 200) || DEFAULT_LOYALTY_SETTINGS.rewardDescription;
+}
+
 function assertRedeemableLoyaltyRedemption(redemptionSnap, uid) {
   if (!redemptionSnap?.exists) {
     throw new HttpsError("failed-precondition", "Loyalty reward is not available");
@@ -144,6 +191,11 @@ function assertRedeemableLoyaltyRedemption(redemptionSnap, uid) {
     rewardCode,
     rewardNumber: Number.isInteger(rewardNumber) && rewardNumber > 0 ? rewardNumber : null,
     status,
+    rewardType: normalizeRewardType(data.rewardType || data.reward_type),
+    rewardValue: normalizeRewardValue(data.rewardValue ?? data.reward_value),
+    rewardDescription: normalizeRewardDescription(data.rewardDescription || data.reward_description),
+    rewardValueCents: normalizeRewardValueCents(data.rewardValueCents ?? data.reward_value_cents),
+    rewardLabel: normalizeRewardLabel(data.rewardLabel || data.reward_label),
   };
 }
 
@@ -152,8 +204,10 @@ function buildUserLoyalty({
   redemptionDocs = [],
   now = new Date(),
   rewardInterval = DEFAULT_REWARD_INTERVAL,
+  loyaltySettings = null,
 }) {
-  const targetWashes = Math.max(1, Number(rewardInterval) || DEFAULT_REWARD_INTERVAL);
+  const settings = normalizeLoyaltySettings(loyaltySettings, rewardInterval);
+  const targetWashes = settings.stampsRequired;
   const stampHistory = (reservationDocs || [])
     .map((doc) => normalizeLoyaltyReservationDocument(doc, now))
     .filter(Boolean)
@@ -185,19 +239,58 @@ function buildUserLoyalty({
     completedRewards,
     claimedRewards,
     availableRewards,
+    rewardType: settings.rewardType,
+    rewardValue: settings.rewardValue,
+    rewardValueCents: settings.rewardValueCents,
+    rewardLabel: settings.rewardLabel,
+    rewardTerms: settings.rewardTerms,
+    rewardDescription: settings.rewardDescription,
     stampHistory,
     redemptions,
   };
 }
 
+function normalizeLoyaltySettings(settings, rewardInterval = DEFAULT_REWARD_INTERVAL) {
+  const source = settings && typeof settings === "object" ? settings : {};
+  const stampsRequired = Number(source.stampsRequired ?? source.rewardInterval ?? rewardInterval);
+  const rewardValue = Number(source.rewardValue);
+  const rewardType = normalizeRewardType(source.rewardType || DEFAULT_LOYALTY_SETTINGS.rewardType);
+  const rewardValueCents = normalizeRewardValueCents(source.rewardValueCents ?? source.reward_value_cents);
+  const rewardLabel = normalizeRewardLabel(source.rewardLabel || source.reward_label);
+  const rewardTerms = String(source.rewardTerms || source.reward_terms || DEFAULT_LOYALTY_SETTINGS.rewardTerms)
+    .trim()
+    .replace(/\s+/g, " ")
+    .slice(0, 500) || DEFAULT_LOYALTY_SETTINGS.rewardTerms;
+  const rewardDescription = String(source.rewardDescription || DEFAULT_LOYALTY_SETTINGS.rewardDescription)
+    .trim()
+    .replace(/\s+/g, " ")
+    .slice(0, 200) || DEFAULT_LOYALTY_SETTINGS.rewardDescription;
+
+  return {
+    stampsRequired: Number.isInteger(stampsRequired) && stampsRequired > 0 ?
+      Math.min(50, stampsRequired) :
+      DEFAULT_LOYALTY_SETTINGS.stampsRequired,
+    rewardType,
+    rewardValue: Number.isFinite(rewardValue) && rewardValue > 0 ?
+      Math.min(100000, Math.floor(rewardValue)) :
+      DEFAULT_LOYALTY_SETTINGS.rewardValue,
+    rewardValueCents,
+    rewardLabel,
+    rewardTerms,
+    rewardDescription,
+  };
+}
+
 module.exports = {
   ACTIVE_REDEMPTION_STATUS_VALUES,
+  DEFAULT_LOYALTY_SETTINGS,
   DEFAULT_REWARD_INTERVAL,
   REDEEMABLE_REDEMPTION_STATUS_VALUES,
   assertRedeemableLoyaltyRedemption,
   buildLoyaltyRewardCode,
   buildUserLoyalty,
   isCompletedLoyaltyWash,
+  normalizeLoyaltySettings,
   normalizeRewardCodeInput,
   normalizeLoyaltyReservationDocument,
   normalizeRedemptionDocument,

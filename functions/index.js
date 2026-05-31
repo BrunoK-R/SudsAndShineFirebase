@@ -85,6 +85,13 @@ const {
   buildLoyaltyRewardCode,
   buildUserLoyalty,
 } = require("./loyalty");
+const {
+  buildLoyaltySettings,
+  buildLoyaltyRedemptionMetadata,
+  buildLoyaltySettingsValue,
+  loyaltyDiscountCentsForRedemption,
+  validateLoyaltySettingsUpdateInput,
+} = require("./loyaltyAdmin");
 
 admin.initializeApp();
 const db = admin.firestore();
@@ -148,6 +155,18 @@ function userVehiclesCollection(uid) {
 
 function userLoyaltyRedemptionsCollection(uid) {
   return db.collection("users").doc(uid).collection("loyalty_redemptions");
+}
+
+function loyaltySettingsRef() {
+  return db.collection("admin_settings").doc("loyalty_settings");
+}
+
+function legacyLoyaltySettingsRef() {
+  return db.collection("business_settings").doc("loyalty_settings");
+}
+
+function selectedLoyaltySettingsSnapshot(primarySnap, legacySnap) {
+  return primarySnap?.exists ? primarySnap : legacySnap;
 }
 
 function reservationLoyaltyRedemptionRef(data) {
@@ -402,11 +421,11 @@ exports.createReservation = onCall(async (request) => {
 
     if (data.loyaltyRewardCode) {
       loyaltyReward = assertRedeemableLoyaltyRedemption(loyaltyRewardSnap?.docs?.[0], authenticatedUid);
-      discountCents = basePriceCents === null ? 0 : basePriceCents;
-      priceCents = basePriceCents === null ? null : extrasPriceCents;
+      discountCents = loyaltyDiscountCentsForRedemption(loyaltyReward, basePriceCents);
+      priceCents = subtotalPriceCents === null ? null : Math.max(0, subtotalPriceCents - discountCents);
     }
 
-    const paymentStatus = loyaltyReward && extrasPriceCents === 0 ? "covered_by_loyalty" : "pending";
+    const paymentStatus = loyaltyReward && priceCents === 0 ? "covered_by_loyalty" : "pending";
 
     tx.set(reservationRef, {
       reservationCode,
@@ -436,6 +455,9 @@ exports.createReservation = onCall(async (request) => {
       loyaltyRewardApplied: Boolean(loyaltyReward),
       loyaltyRewardCode: loyaltyReward?.rewardCode || "",
       loyaltyRedemptionId: loyaltyReward?.id || null,
+      loyaltyRewardType: loyaltyReward?.rewardType || "",
+      loyaltyRewardValue: loyaltyReward?.rewardValue || 0,
+      loyaltyRewardDescription: loyaltyReward?.rewardDescription || "",
       status: "pending",
       pendingExpiresAt,
       notes: data.notes,
@@ -576,9 +598,17 @@ exports.getMyReservations = onCall(async (request) => {
   const historyReservationQueries = userHistoryReservationQueries(uid, email);
   const loyaltyReservationQueries = userLoyaltyReservationQueries(uid, email);
 
-  const [servicesSnap, redemptionSnap, ...reservationSnaps] = await Promise.all([
+  const [
+    servicesSnap,
+    redemptionSnap,
+    loyaltySettingsSnap,
+    legacyLoyaltySettingsSnap,
+    ...reservationSnaps
+  ] = await Promise.all([
     db.collection("services").get(),
     userLoyaltyRedemptionsCollection(uid).limit(100).get(),
+    loyaltySettingsRef().get(),
+    legacyLoyaltySettingsRef().get(),
     ...historyReservationQueries.map((query) => query.get()),
     ...loyaltyReservationQueries.map((query) => query.get()),
   ]);
@@ -591,9 +621,13 @@ exports.getMyReservations = onCall(async (request) => {
     db.collection("reservation_reviews").doc(buildReservationReviewId(reservationDoc.id, uid)),
   );
   const reviewDocs = reviewRefs.length > 0 ? await db.getAll(...reviewRefs) : [];
+  const loyaltySettings = buildLoyaltySettings(
+    selectedLoyaltySettingsSnapshot(loyaltySettingsSnap, legacyLoyaltySettingsSnap),
+  );
   const loyalty = buildUserLoyalty({
     reservationDocs: loyaltyReservationDocs,
     redemptionDocs: redemptionSnap.docs,
+    loyaltySettings,
   });
 
   return buildUserReservationHistory({
@@ -608,14 +642,20 @@ exports.getMyLoyalty = onCall(async (request) => {
   const uid = assertAuthenticatedUid(request);
   const email = authenticatedEmail(request);
 
-  const [redemptionSnap, ...reservationSnaps] = await Promise.all([
+  const [redemptionSnap, loyaltySettingsSnap, legacyLoyaltySettingsSnap, ...reservationSnaps] = await Promise.all([
     userLoyaltyRedemptionsCollection(uid).limit(100).get(),
+    loyaltySettingsRef().get(),
+    legacyLoyaltySettingsRef().get(),
     ...userLoyaltyReservationQueries(uid, email).map((query) => query.get()),
   ]);
+  const loyaltySettings = buildLoyaltySettings(
+    selectedLoyaltySettingsSnapshot(loyaltySettingsSnap, legacyLoyaltySettingsSnap),
+  );
 
   return buildUserLoyalty({
     reservationDocs: uniqueReservationDocsFromSnaps(reservationSnaps),
     redemptionDocs: redemptionSnap.docs,
+    loyaltySettings,
   });
 });
 
@@ -626,14 +666,25 @@ exports.redeemMyLoyaltyReward = onCall(async (request) => {
   let loyalty = null;
 
   await db.runTransaction(async (tx) => {
-    const [redemptionSnap, ...reservationSnaps] = await Promise.all([
+    const [
+      redemptionSnap,
+      loyaltySettingsSnap,
+      legacyLoyaltySettingsSnap,
+      ...reservationSnaps
+    ] = await Promise.all([
       tx.get(userLoyaltyRedemptionsCollection(uid).limit(100)),
+      tx.get(loyaltySettingsRef()),
+      tx.get(legacyLoyaltySettingsRef()),
       ...userLoyaltyReservationQueries(uid, email).map((query) => tx.get(query)),
     ]);
     const reservationDocs = uniqueReservationDocsFromSnaps(reservationSnaps);
+    const loyaltySettings = buildLoyaltySettings(
+      selectedLoyaltySettingsSnapshot(loyaltySettingsSnap, legacyLoyaltySettingsSnap),
+    );
     const currentLoyalty = buildUserLoyalty({
       reservationDocs,
       redemptionDocs: redemptionSnap.docs,
+      loyaltySettings,
     });
 
     if (!currentLoyalty.rewardReady) {
@@ -657,6 +708,7 @@ exports.redeemMyLoyaltyReward = onCall(async (request) => {
       rewardNumber,
       rewardCode,
       status: "issued",
+      ...buildLoyaltyRedemptionMetadata(loyaltySettings),
       source: "mobile-app",
       createdAt: admin.firestore.FieldValue.serverTimestamp(),
       updatedAt: admin.firestore.FieldValue.serverTimestamp(),
@@ -683,6 +735,7 @@ exports.redeemMyLoyaltyReward = onCall(async (request) => {
       reservationDocs,
       redemptionDocs: [...redemptionSnap.docs, previewRedemptionDoc],
       now,
+      loyaltySettings,
     });
   });
 
@@ -1143,6 +1196,16 @@ exports.getAdminBookingPolicy = onCall(async (request) => {
   return buildBookingPolicy(policySnap);
 });
 
+exports.getAdminLoyaltySettings = onCall(async (request) => {
+  await assertAdminRequest(request);
+
+  const [settingsSnap, legacySettingsSnap] = await Promise.all([
+    loyaltySettingsRef().get(),
+    legacyLoyaltySettingsRef().get(),
+  ]);
+  return buildLoyaltySettings(selectedLoyaltySettingsSnapshot(settingsSnap, legacySettingsSnap));
+});
+
 exports.updateBusinessInfo = onCall(async (request) => {
   await assertAdminRequest(request);
   const businessInfo = validateBusinessInfoUpdateInput(request.data);
@@ -1183,6 +1246,28 @@ exports.updateBookingPolicy = onCall(async (request) => {
 
   return {
     ...policy,
+    source: "firestore",
+  };
+});
+
+exports.updateLoyaltySettings = onCall(async (request) => {
+  await assertAdminRequest(request);
+  const settings = validateLoyaltySettingsUpdateInput(request.data);
+  const value = buildLoyaltySettingsValue(settings);
+
+  await loyaltySettingsRef().set(
+    {
+      key: "loyalty_settings",
+      value,
+      updatedAt: admin.firestore.FieldValue.serverTimestamp(),
+      updatedByUid: request.auth.uid,
+      updateSource: "admin-mobile-loyalty",
+    },
+    {merge: true},
+  );
+
+  return {
+    ...settings,
     source: "firestore",
   };
 });

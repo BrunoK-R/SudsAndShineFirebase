@@ -106,6 +106,10 @@ service cloud.firestore {
       allow write: if isAdmin();
     }
 
+    match /admin_settings/{docId} {
+      allow read, write: if isAdmin();
+    }
+
     match /reservations/{docId} {
       allow create: if isStaff() || isValidPublicReservationCreate();
       allow read, update, delete: if isStaff();

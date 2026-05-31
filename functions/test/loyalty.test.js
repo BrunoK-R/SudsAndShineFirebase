@@ -69,6 +69,27 @@ test("buildUserLoyalty subtracts claimed rewards from available rewards", () => 
   assert.equal(loyalty.redemptions.length, 1);
 });
 
+test("buildUserLoyalty respects configured stamp target and reward copy", () => {
+  const loyalty = buildUserLoyalty({
+    now: new Date("2026-05-20T12:00:00.000Z"),
+    loyaltySettings: {
+      stampsRequired: 8,
+      rewardType: "discount_percent",
+      rewardValue: 15,
+      rewardDescription: "15% de desconto",
+    },
+    reservationDocs: Array.from({length: 8}, (_, index) =>
+      completedReservation(`reservation-${index + 1}`, index + 1),
+    ),
+  });
+
+  assert.equal(loyalty.targetWashes, 8);
+  assert.equal(loyalty.availableRewards, 1);
+  assert.equal(loyalty.rewardType, "discount_percent");
+  assert.equal(loyalty.rewardValue, 15);
+  assert.equal(loyalty.rewardDescription, "15% de desconto");
+});
+
 test("buildUserLoyalty counts only explicitly completed reservations", () => {
   const loyalty = buildUserLoyalty({
     now: new Date("2026-05-20T12:00:00.000Z"),
