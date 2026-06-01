@@ -1,7 +1,9 @@
-const NOTIFICATION_DELIVERY_STATES = new Set(["queued", "retry", "sending"]);
+const NOTIFICATION_DELIVERY_STATES = new Set(["queued", "retry", "sending", "deferred"]);
 const MAX_DELIVERY_TOKENS_PER_USER = 100;
 const MAX_DELIVERY_ATTEMPTS = 5;
 const DELIVERY_LEASE_MINUTES = 10;
+const NOTIFICATION_QUIET_HOURS_TIME_ZONE = "Europe/Lisbon";
+const MINUTES_PER_DAY = 24 * 60;
 
 const TERMINAL_TOKEN_ERROR_CODES = new Set([
   "messaging/invalid-registration-token",
@@ -16,6 +18,8 @@ const RETRYABLE_MESSAGING_ERROR_CODES = new Set([
   "messaging/quota-exceeded",
   "messaging/device-message-rate-exceeded",
 ]);
+
+const QuietHourRegex = /^([01]\d|2[0-3]):([0-5]\d)$/;
 
 function cleanDeliveryText(value, maxLength = 240) {
   if (value === undefined || value === null) return "";
@@ -46,6 +50,106 @@ function isNotificationSendingLeaseExpired(outbox = {}, now = new Date()) {
 
 function nextDeliveryLeaseExpiration(now = new Date()) {
   return new Date(now.getTime() + DELIVERY_LEASE_MINUTES * 60 * 1000);
+}
+
+function quietHourMinutes(value) {
+  const text = cleanDeliveryText(value, 5);
+  const match = QuietHourRegex.exec(text);
+  if (!match) return null;
+  return Number(match[1]) * 60 + Number(match[2]);
+}
+
+function localMinutesForDate(now = new Date(), timeZone = NOTIFICATION_QUIET_HOURS_TIME_ZONE) {
+  try {
+    const parts = new Intl.DateTimeFormat("en-GB", {
+      timeZone,
+      hour: "2-digit",
+      minute: "2-digit",
+      hourCycle: "h23",
+    }).formatToParts(now);
+    const hour = Number(parts.find((part) => part.type === "hour")?.value);
+    const minute = Number(parts.find((part) => part.type === "minute")?.value);
+    if (!Number.isFinite(hour) || !Number.isFinite(minute)) return null;
+    return hour * 60 + minute;
+  } catch {
+    return null;
+  }
+}
+
+function isNotificationQuietHour(
+  settings = {},
+  now = new Date(),
+  timeZone = NOTIFICATION_QUIET_HOURS_TIME_ZONE,
+) {
+  const start = quietHourMinutes(settings?.quietHoursStart);
+  const end = quietHourMinutes(settings?.quietHoursEnd);
+  if (start === null || end === null || start === end) return false;
+
+  const current = localMinutesForDate(now, timeZone);
+  if (current === null) return false;
+
+  if (start < end) {
+    return current >= start && current < end;
+  }
+  return current >= start || current < end;
+}
+
+function shouldBypassNotificationQuietHours(outbox = {}) {
+  return cleanDeliveryText(outbox.type, 80) === "admin_test_notification" ||
+    outbox.preferencesSnapshot?.adminTestOnly === true;
+}
+
+function minutesUntilQuietHourEnd(
+  settings = {},
+  now = new Date(),
+  timeZone = NOTIFICATION_QUIET_HOURS_TIME_ZONE,
+) {
+  const start = quietHourMinutes(settings?.quietHoursStart);
+  const end = quietHourMinutes(settings?.quietHoursEnd);
+  if (start === null || end === null || start === end) return 0;
+
+  const current = localMinutesForDate(now, timeZone);
+  if (current === null || !isNotificationQuietHour(settings, now, timeZone)) return 0;
+  if (start < end) return end - current;
+  if (current >= start) return (MINUTES_PER_DAY - current) + end;
+  return end - current;
+}
+
+function notificationQuietHoursDeferral(
+  outbox = {},
+  settings = {},
+  now = new Date(),
+  timeZone = NOTIFICATION_QUIET_HOURS_TIME_ZONE,
+) {
+  if (
+    !isNotificationOutboxDeliverable(outbox) ||
+    shouldBypassNotificationQuietHours(outbox) ||
+    !isNotificationQuietHour(settings, now, timeZone)
+  ) {
+    return null;
+  }
+
+  const minutesUntilEnd = minutesUntilQuietHourEnd(settings, now, timeZone);
+  if (minutesUntilEnd <= 0) return null;
+
+  return {
+    deliveryState: "deferred",
+    deliveryLeaseExpiresAt: null,
+    deliveryDeferralReason: "quiet-hours",
+    quietHoursDeferredUntil: new Date(now.getTime() + minutesUntilEnd * 60 * 1000),
+    quietHoursStart: cleanDeliveryText(settings.quietHoursStart, 16),
+    quietHoursEnd: cleanDeliveryText(settings.quietHoursEnd, 16),
+    quietHoursTimeZone: cleanDeliveryText(timeZone, 80) || NOTIFICATION_QUIET_HOURS_TIME_ZONE,
+  };
+}
+
+function shouldDeferNotificationForQuietHours(
+  outbox = {},
+  settings = {},
+  now = new Date(),
+  timeZone = NOTIFICATION_QUIET_HOURS_TIME_ZONE,
+) {
+  return notificationQuietHoursDeferral(outbox, settings, now, timeZone) !== null;
 }
 
 function notificationTokenDeliveryFromSnap(tokenSnap, recipientUid) {
@@ -211,11 +315,15 @@ module.exports = {
   DELIVERY_LEASE_MINUTES,
   MAX_DELIVERY_ATTEMPTS,
   MAX_DELIVERY_TOKENS_PER_USER,
+  NOTIFICATION_QUIET_HOURS_TIME_ZONE,
   buildNotificationPushMessage,
   deliveryCompletionUpdate,
   deliveryFailureUpdate,
+  isNotificationQuietHour,
   isNotificationOutboxDeliverable,
   isNotificationSendingLeaseExpired,
   nextDeliveryLeaseExpiration,
+  notificationQuietHoursDeferral,
   notificationTokenDeliveryFromSnap,
+  shouldDeferNotificationForQuietHours,
 };

@@ -2,13 +2,17 @@ const test = require("node:test");
 const assert = require("node:assert/strict");
 const {
   MAX_DELIVERY_ATTEMPTS,
+  NOTIFICATION_QUIET_HOURS_TIME_ZONE,
   buildNotificationPushMessage,
   deliveryCompletionUpdate,
   deliveryFailureUpdate,
+  isNotificationQuietHour,
   isNotificationOutboxDeliverable,
   isNotificationSendingLeaseExpired,
   nextDeliveryLeaseExpiration,
+  notificationQuietHoursDeferral,
   notificationTokenDeliveryFromSnap,
+  shouldDeferNotificationForQuietHours,
 } = require("../notificationDelivery");
 
 test("notificationTokenDeliveryFromSnap returns only active owner-scoped tokens", () => {
@@ -145,6 +149,10 @@ test("outbox deliverability and sending leases are bounded", () => {
     ...outbox(),
     channels: ["email"],
   }), false);
+  assert.equal(isNotificationOutboxDeliverable({
+    ...outbox(),
+    deliveryState: "deferred",
+  }), true);
   assert.equal(isNotificationSendingLeaseExpired({
     ...outbox(),
     deliveryState: "sending",
@@ -158,6 +166,93 @@ test("outbox deliverability and sending leases are bounded", () => {
 
   const lease = nextDeliveryLeaseExpiration(new Date("2026-05-31T18:00:00.000Z"));
   assert.equal(lease.toISOString(), "2026-05-31T18:10:00.000Z");
+});
+
+test("notification quiet hours support overnight and same-day windows", () => {
+  const overnightSettings = {
+    quietHoursStart: "22:00",
+    quietHoursEnd: "08:00",
+  };
+  const sameDaySettings = {
+    quietHoursStart: "13:00",
+    quietHoursEnd: "14:30",
+  };
+
+  assert.equal(NOTIFICATION_QUIET_HOURS_TIME_ZONE, "Europe/Lisbon");
+  assert.equal(
+    isNotificationQuietHour(overnightSettings, new Date("2026-01-01T22:30:00.000Z")),
+    true,
+  );
+  assert.equal(
+    isNotificationQuietHour(overnightSettings, new Date("2026-01-02T07:30:00.000Z")),
+    true,
+  );
+  assert.equal(
+    isNotificationQuietHour(overnightSettings, new Date("2026-01-02T08:00:00.000Z")),
+    false,
+  );
+  assert.equal(
+    isNotificationQuietHour(sameDaySettings, new Date("2026-01-01T13:30:00.000Z")),
+    true,
+  );
+  assert.equal(
+    isNotificationQuietHour(sameDaySettings, new Date("2026-01-01T14:30:00.000Z")),
+    false,
+  );
+  assert.equal(isNotificationQuietHour({
+    quietHoursStart: "08:00",
+    quietHoursEnd: "08:00",
+  }, new Date("2026-01-01T08:15:00.000Z")), false);
+  assert.equal(isNotificationQuietHour({
+    quietHoursStart: "bad",
+    quietHoursEnd: "08:00",
+  }, new Date("2026-01-01T07:30:00.000Z")), false);
+});
+
+test("quiet hours defer normal push delivery but allow admin self-tests", () => {
+  const settings = {
+    quietHoursStart: "22:00",
+    quietHoursEnd: "08:00",
+  };
+  const quietNow = new Date("2026-01-01T23:00:00.000Z");
+  const activeNow = new Date("2026-01-01T12:00:00.000Z");
+
+  assert.equal(shouldDeferNotificationForQuietHours(outbox(), settings, quietNow), true);
+  assert.equal(shouldDeferNotificationForQuietHours(outbox(), settings, activeNow), false);
+  assert.equal(shouldDeferNotificationForQuietHours(outbox({
+    type: "admin_test_notification",
+  }), settings, quietNow), false);
+  assert.equal(shouldDeferNotificationForQuietHours(outbox({
+    preferencesSnapshot: {adminTestOnly: true},
+  }), settings, quietNow), false);
+  assert.equal(shouldDeferNotificationForQuietHours(outbox({
+    channels: ["email"],
+  }), settings, quietNow), false);
+});
+
+test("quiet hours deferral records next delivery window without consuming attempts", () => {
+  const settings = {
+    quietHoursStart: "22:00",
+    quietHoursEnd: "08:00",
+  };
+  const deferral = notificationQuietHoursDeferral(
+    outbox(),
+    settings,
+    new Date("2026-01-01T23:30:00.000Z"),
+    "UTC",
+  );
+
+  assert.equal(deferral.deliveryState, "deferred");
+  assert.equal(deferral.deliveryLeaseExpiresAt, null);
+  assert.equal(deferral.deliveryDeferralReason, "quiet-hours");
+  assert.equal(deferral.quietHoursDeferredUntil.toISOString(), "2026-01-02T08:00:00.000Z");
+  assert.equal(deferral.quietHoursStart, "22:00");
+  assert.equal(deferral.quietHoursEnd, "08:00");
+  assert.equal(deferral.quietHoursTimeZone, "UTC");
+  assert.equal(
+    notificationQuietHoursDeferral(outbox(), settings, new Date("2026-01-01T12:00:00.000Z"), "UTC"),
+    null,
+  );
 });
 
 function retryResponse() {

@@ -126,6 +126,7 @@ const {
   isNotificationOutboxDeliverable,
   isNotificationSendingLeaseExpired,
   nextDeliveryLeaseExpiration,
+  notificationQuietHoursDeferral,
   notificationTokenDeliveryFromSnap,
 } = require("./notificationDelivery");
 
@@ -2212,7 +2213,7 @@ exports.queueBookingReminderNotifications = onSchedule("every 15 minutes", async
   };
 });
 
-async function claimNotificationOutboxDelivery(docSnap, now = new Date()) {
+async function claimNotificationOutboxDelivery(docSnap, now = new Date(), notificationSettings = {}) {
   return db.runTransaction(async (tx) => {
     const freshSnap = await tx.get(docSnap.ref);
     if (!freshSnap.exists) return null;
@@ -2236,12 +2237,34 @@ async function claimNotificationOutboxDelivery(docSnap, now = new Date()) {
       return null;
     }
 
+    const quietHoursDeferral = notificationQuietHoursDeferral(outbox, notificationSettings, now);
+    if (quietHoursDeferral) {
+      tx.update(freshSnap.ref, {
+        ...quietHoursDeferral,
+        quietHoursDeferredUntil: admin.firestore.Timestamp.fromDate(
+          quietHoursDeferral.quietHoursDeferredUntil,
+        ),
+        updatedAt: serverNow,
+      });
+      return {
+        ref: freshSnap.ref,
+        state: "deferred",
+        outbox,
+        deferredUntil: quietHoursDeferral.quietHoursDeferredUntil,
+      };
+    }
+
     const attemptCount = previousAttemptCount + 1;
     tx.update(freshSnap.ref, {
       deliveryState: "sending",
       attemptCount,
       lastAttemptAt: serverNow,
       deliveryLeaseExpiresAt: admin.firestore.Timestamp.fromDate(nextDeliveryLeaseExpiration(now)),
+      deliveryDeferralReason: admin.firestore.FieldValue.delete(),
+      quietHoursDeferredUntil: admin.firestore.FieldValue.delete(),
+      quietHoursStart: admin.firestore.FieldValue.delete(),
+      quietHoursEnd: admin.firestore.FieldValue.delete(),
+      quietHoursTimeZone: admin.firestore.FieldValue.delete(),
       updatedAt: serverNow,
     });
 
@@ -2292,9 +2315,16 @@ async function revokeInvalidNotificationTokens(uid, invalidTokenIds) {
   await batch.commit();
 }
 
-async function processNotificationOutboxDocument(docSnap) {
-  const claimed = await claimNotificationOutboxDelivery(docSnap);
+async function processNotificationOutboxDocument(docSnap, {
+  notificationSettingsSnap = null,
+  now = new Date(),
+} = {}) {
+  const settings = buildNotificationSettings(notificationSettingsSnap);
+  const claimed = await claimNotificationOutboxDelivery(docSnap, now, settings);
   if (!claimed) return {state: "skipped"};
+  if (claimed.state === "deferred") {
+    return {state: "deferred", reason: "quiet-hours"};
+  }
 
   const serverNow = admin.firestore.FieldValue.serverTimestamp();
   const recipientUid = String(claimed.outbox.recipientUid || "").trim();
@@ -2358,24 +2388,33 @@ async function processNotificationOutboxDocument(docSnap) {
 }
 
 exports.processNotificationOutbox = onSchedule("every 5 minutes", async () => {
-  const outboxSnap = await db.collection(NOTIFICATION_OUTBOX_COLLECTION)
-    .where("deliveryState", "in", ["queued", "retry", "sending"])
-    .limit(100)
-    .get();
+  const [outboxSnap, notificationSettingsSnap] = await Promise.all([
+    db.collection(NOTIFICATION_OUTBOX_COLLECTION)
+      .where("deliveryState", "in", ["queued", "retry", "sending", "deferred"])
+      .limit(100)
+      .get(),
+    notificationSettingsRef().get(),
+  ]);
+  const now = new Date();
 
   const summary = {
     scannedCount: outboxSnap.size,
     sentCount: 0,
     queuedCount: 0,
     failedCount: 0,
+    deferredCount: 0,
     skippedCount: 0,
   };
 
   for (const docSnap of outboxSnap.docs) {
-    const result = await processNotificationOutboxDocument(docSnap);
+    const result = await processNotificationOutboxDocument(docSnap, {
+      notificationSettingsSnap,
+      now,
+    });
     if (result.state === "sent") summary.sentCount += 1;
     else if (result.state === "queued") summary.queuedCount += 1;
     else if (result.state === "failed") summary.failedCount += 1;
+    else if (result.state === "deferred") summary.deferredCount += 1;
     else summary.skippedCount += 1;
   }
 
