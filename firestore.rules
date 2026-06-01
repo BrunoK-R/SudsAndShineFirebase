@@ -49,6 +49,16 @@ service cloud.firestore {
         request.resource.data.ownerUid == userId;
     }
 
+    function optionalUserField(key, userId) {
+      return !request.resource.data.keys().hasAny([key]) ||
+        request.resource.data[key] == userId;
+    }
+
+    function optionalDocumentIdField(key, docId) {
+      return !request.resource.data.keys().hasAny([key]) ||
+        request.resource.data[key] == docId;
+    }
+
     function isValidPublicReservationCreate() {
       return request.resource.data.keys().hasOnly([
           'reservationCode',
@@ -117,10 +127,11 @@ service cloud.firestore {
         optionalBoolField('marketingEnabled') &&
         optionalTimestampField('updatedAt') &&
         optionalStringField('updatedByUid', 128) &&
+        optionalUserField('updatedByUid', userId) &&
         optionalStringField('updateSource', 80);
     }
 
-    function isValidNotificationTokenWrite(userId) {
+    function isValidNotificationTokenWrite(userId, tokenDocId) {
       return request.resource.data.keys().hasOnly([
           'ownerUid',
           'tokenId',
@@ -137,6 +148,7 @@ service cloud.firestore {
         ]) &&
         optionalOwnerField(userId) &&
         optionalStringField('tokenId', 128) &&
+        optionalDocumentIdField('tokenId', tokenDocId) &&
         optionalStringField('token', 4096) &&
         optionalStringField('platform', 20) &&
         optionalBoolField('enabled') &&
@@ -204,7 +216,7 @@ service cloud.firestore {
 
       match /notification_tokens/{docId} {
         allow read: if isOwner(userId);
-        allow create, update: if isOwner(userId) && isValidNotificationTokenWrite(userId);
+        allow create, update: if isOwner(userId) && isValidNotificationTokenWrite(userId, docId);
         allow delete: if isOwner(userId);
       }
 

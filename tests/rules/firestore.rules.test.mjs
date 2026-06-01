@@ -199,6 +199,16 @@ test('users can only manage their own notification preferences and tokens', asyn
     updatedAt: now,
     updatedByUid: 'user-2',
   }));
+  await assertFails(setDoc(doc(userDb('user-1'), 'users', 'user-1', 'notification_preferences', 'default'), {
+    ownerUid: 'user-1',
+    bookingStatusEnabled: false,
+    appointmentReminderEnabled: true,
+    loyaltyEnabled: true,
+    adminPendingAlertEnabled: false,
+    marketingEnabled: false,
+    updatedAt: now,
+    updatedByUid: 'user-2',
+  }));
   await assertSucceeds(setDoc(doc(userDb('user-1'), 'users', 'user-1', 'notification_preferences', 'default'), {
     ownerUid: 'user-1',
     bookingStatusEnabled: false,
@@ -226,6 +236,15 @@ test('users can only manage their own notification preferences and tokens', asyn
   await assertFails(setDoc(doc(userDb('user-1'), 'users', 'user-1', 'notification_tokens', 'bad-owner'), {
     ownerUid: 'user-2',
     tokenId: 'bad-owner',
+    platform: 'ios',
+    token: 'test-token-for-current-device-2222222222',
+    enabled: true,
+    createdAt: now,
+    updatedAt: now,
+  }));
+  await assertFails(setDoc(doc(userDb('user-1'), 'users', 'user-1', 'notification_tokens', 'token-2'), {
+    ownerUid: 'user-1',
+    tokenId: 'other-token',
     platform: 'ios',
     token: 'test-token-for-current-device-2222222222',
     enabled: true,
