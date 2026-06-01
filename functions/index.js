@@ -35,8 +35,11 @@ const {
 } = require("./businessInfo");
 const {
   buildAdminAvailabilityConfig,
+  buildBlockedSlotDocument,
   buildCapacityOverrideDocument,
   validateAvailabilityConfigurationInput,
+  validateBlockedSlotClearInput,
+  validateBlockedSlotInput,
   validateCapacityOverrideClearInput,
   validateCapacityOverrideInput,
 } = require("./availabilityAdmin");
@@ -1479,11 +1482,13 @@ exports.getAdminAvailabilityConfiguration = onCall(async (request) => {
     keyedSnap,
     defaultCapacitySnap,
     capacityOverridesSnap,
+    blockedSlotsSnap,
   ] = await Promise.all([
     db.collection("business_settings").doc("business_info").get(),
     db.collection("business_settings").where("key", "==", "business_info").limit(1).get(),
     db.collection("business_settings").where("key", "==", "default_max_bookings_per_slot").limit(1).get(),
     db.collection("capacity_overrides").orderBy("date").limit(120).get(),
+    db.collection("blocked_slots").orderBy("date").limit(240).get(),
   ]);
   const businessInfo = businessInfoFromSnapshots(directSnap, keyedSnap);
   assertBusinessInfoReadable(businessInfo);
@@ -1492,6 +1497,7 @@ exports.getAdminAvailabilityConfiguration = onCall(async (request) => {
     businessInfo,
     defaultCapacitySetting: defaultCapacitySnap.empty ? null : defaultCapacitySnap.docs[0].data(),
     capacityOverrideDocs: capacityOverridesSnap.docs,
+    blockedSlotDocs: blockedSlotsSnap.docs,
   });
 });
 
@@ -1773,15 +1779,16 @@ exports.updateAvailabilityConfiguration = onCall(async (request) => {
   );
   await batch.commit();
 
-  const capacityOverridesSnap = await db.collection("capacity_overrides")
-    .orderBy("date")
-    .limit(120)
-    .get();
+  const [capacityOverridesSnap, blockedSlotsSnap] = await Promise.all([
+    db.collection("capacity_overrides").orderBy("date").limit(120).get(),
+    db.collection("blocked_slots").orderBy("date").limit(240).get(),
+  ]);
 
   return buildAdminAvailabilityConfig({
     businessInfo: updatedBusinessInfo,
     defaultCapacitySetting: {value: availability.defaultMaxBookingsPerSlot},
     capacityOverrideDocs: capacityOverridesSnap.docs,
+    blockedSlotDocs: blockedSlotsSnap.docs,
   });
 });
 
@@ -1826,6 +1833,57 @@ exports.clearCapacityOverride = onCall(async (request) => {
   return {
     ok: true,
     date: override.date,
+    status: "cleared",
+  };
+});
+
+exports.upsertBlockedSlot = onCall(async (request) => {
+  await assertAdminRequest(request);
+  const fallbackRef = db.collection("blocked_slots").doc();
+  const blockedSlot = validateBlockedSlotInput(request.data, fallbackRef.id);
+
+  await db.collection("blocked_slots").doc(blockedSlot.blockedSlotId).set(
+    {
+      ...buildBlockedSlotDocument(blockedSlot, request.auth.uid),
+      updatedAt: admin.firestore.FieldValue.serverTimestamp(),
+    },
+    {merge: true},
+  );
+
+  return {
+    ok: true,
+    blockedSlotId: blockedSlot.blockedSlotId,
+    date: blockedSlot.date,
+    status: "updated",
+  };
+});
+
+exports.clearBlockedSlot = onCall(async (request) => {
+  await assertAdminRequest(request);
+  const blockedSlot = validateBlockedSlotClearInput(request.data);
+
+  await db.collection("blocked_slots").doc(blockedSlot.blockedSlotId).set(
+    {
+      blockedSlotId: blockedSlot.blockedSlotId,
+      active: false,
+      slotStart: admin.firestore.FieldValue.delete(),
+      slotEnd: admin.firestore.FieldValue.delete(),
+      startTime: admin.firestore.FieldValue.delete(),
+      endTime: admin.firestore.FieldValue.delete(),
+      start_time: admin.firestore.FieldValue.delete(),
+      end_time: admin.firestore.FieldValue.delete(),
+      clearedAt: admin.firestore.FieldValue.serverTimestamp(),
+      clearedByUid: request.auth.uid,
+      updatedAt: admin.firestore.FieldValue.serverTimestamp(),
+      updatedByUid: request.auth.uid,
+      updateSource: "admin-mobile-availability",
+    },
+    {merge: true},
+  );
+
+  return {
+    ok: true,
+    blockedSlotId: blockedSlot.blockedSlotId,
     status: "cleared",
   };
 });

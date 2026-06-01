@@ -335,6 +335,18 @@ test('only staff can read reservations and blocked slots', async () => {
 
   await assertFails(getDoc(doc(unauthDb(), 'reservations', 'r-1')));
   await assertFails(getDoc(doc(unauthDb(), 'blocked_slots', 'b-1')));
+  await assertFails(setDoc(doc(staffDb(), 'blocked_slots', 'b-2'), {
+    date: '2026-04-08',
+    slotStart: '2026-04-08T15:00:00.000Z',
+    slotEnd: '2026-04-08T16:00:00.000Z',
+    reason: 'Staff cannot block directly',
+  }));
+  await assertSucceeds(setDoc(doc(adminDb(), 'blocked_slots', 'b-2'), {
+    date: '2026-04-08',
+    slotStart: '2026-04-08T15:00:00.000Z',
+    slotEnd: '2026-04-08T16:00:00.000Z',
+    reason: 'Admin block',
+  }));
 });
 
 test('capacity overrides are staff-readable and admin-writable only', async () => {

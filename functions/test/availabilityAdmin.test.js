@@ -2,9 +2,12 @@ const test = require("node:test");
 const assert = require("node:assert/strict");
 const {
   buildAdminAvailabilityConfig,
+  buildBlockedSlotDocument,
   buildCapacityOverrideDocument,
   readDefaultCapacity,
   validateAvailabilityConfigurationInput,
+  validateBlockedSlotClearInput,
+  validateBlockedSlotInput,
   validateCapacityOverrideClearInput,
   validateCapacityOverrideInput,
 } = require("../availabilityAdmin");
@@ -27,6 +30,29 @@ test("buildAdminAvailabilityConfig maps current capacity and operating hours", (
       doc({date: "2026-06-10", max_bookings_per_slot: "4"}),
       doc({date: "2026-06-12", maxBookingsPerSlot: 8, active: false}),
     ],
+    blockedSlotDocs: [
+      doc({
+        blockedSlotId: "slot-late",
+        date: "2026-06-10",
+        slotStart: "2026-06-10T16:00:00.000Z",
+        slotEnd: "2026-06-10T17:00:00.000Z",
+        reason: "Formação",
+      }, "slot-late"),
+      doc({
+        blockedSlotId: "slot-early",
+        date: "2026-06-10",
+        slotStart: "2026-06-10T09:00:00.000Z",
+        slotEnd: "2026-06-10T10:00:00.000Z",
+        reason: "Manutenção",
+      }, "slot-early"),
+      doc({
+        blockedSlotId: "slot-inactive",
+        date: "2026-06-11",
+        slotStart: "2026-06-11T09:00:00.000Z",
+        slotEnd: "2026-06-11T10:00:00.000Z",
+        active: false,
+      }, "slot-inactive"),
+    ],
   });
 
   assert.equal(config.defaultMaxBookingsPerSlot, 3);
@@ -35,6 +61,22 @@ test("buildAdminAvailabilityConfig maps current capacity and operating hours", (
   assert.deepEqual(config.capacityOverrides, [
     {date: "2026-06-10", maxBookingsPerSlot: 4},
     {date: "2026-06-11", maxBookingsPerSlot: 0},
+  ]);
+  assert.deepEqual(config.blockedSlots, [
+    {
+      blockedSlotId: "slot-early",
+      date: "2026-06-10",
+      slotStart: "2026-06-10T09:00:00.000Z",
+      slotEnd: "2026-06-10T10:00:00.000Z",
+      reason: "Manutenção",
+    },
+    {
+      blockedSlotId: "slot-late",
+      date: "2026-06-10",
+      slotStart: "2026-06-10T16:00:00.000Z",
+      slotEnd: "2026-06-10T17:00:00.000Z",
+      reason: "Formação",
+    },
   ]);
 });
 
@@ -119,8 +161,70 @@ test("validateCapacityOverrideInput rejects invalid dates and capacity", () => {
   });
 });
 
-function doc(data) {
+test("validateBlockedSlotInput sanitizes admin blocked windows", () => {
+  const blockedSlot = validateBlockedSlotInput({
+    blockedSlotId: "  staff_meeting ",
+    date: " 2026-06-10 ",
+    slotStart: "2026-06-10T09:00:00Z",
+    slotEnd: "2026-06-10T10:30:00Z",
+    reason: "  Equipa   em reunião ",
+  });
+
+  assert.deepEqual(blockedSlot, {
+    blockedSlotId: "staff_meeting",
+    date: "2026-06-10",
+    slotStart: "2026-06-10T09:00:00.000Z",
+    slotEnd: "2026-06-10T10:30:00.000Z",
+    reason: "Equipa em reunião",
+  });
+  assert.deepEqual(buildBlockedSlotDocument(blockedSlot, "admin-1"), {
+    blockedSlotId: "staff_meeting",
+    date: "2026-06-10",
+    slotStart: "2026-06-10T09:00:00.000Z",
+    slotEnd: "2026-06-10T10:30:00.000Z",
+    reason: "Equipa em reunião",
+    active: true,
+    updatedByUid: "admin-1",
+    updateSource: "admin-mobile-availability",
+  });
+});
+
+test("validateBlockedSlotInput rejects path ids, date mismatches, and reversed times", () => {
+  assert.throws(
+    () => validateBlockedSlotInput({
+      blockedSlotId: "../bad",
+      date: "2026-06-10",
+      slotStart: "2026-06-10T09:00:00.000Z",
+      slotEnd: "2026-06-10T10:00:00.000Z",
+    }),
+    /blockedSlotId/,
+  );
+  assert.throws(
+    () => validateBlockedSlotInput({
+      blockedSlotId: "slot-1",
+      date: "2026-06-10",
+      slotStart: "2026-06-11T09:00:00.000Z",
+      slotEnd: "2026-06-11T10:00:00.000Z",
+    }),
+    /match the selected date/,
+  );
+  assert.throws(
+    () => validateBlockedSlotInput({
+      blockedSlotId: "slot-1",
+      date: "2026-06-10",
+      slotStart: "2026-06-10T11:00:00.000Z",
+      slotEnd: "2026-06-10T10:00:00.000Z",
+    }),
+    /after start time/,
+  );
+  assert.deepEqual(validateBlockedSlotClearInput({blockedSlotId: "slot-1"}), {
+    blockedSlotId: "slot-1",
+  });
+});
+
+function doc(data, id = undefined) {
   return {
+    id,
     data: () => data,
   };
 }
