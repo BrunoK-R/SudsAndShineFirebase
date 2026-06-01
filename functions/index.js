@@ -123,9 +123,11 @@ const {
   buildNotificationPushMessage,
   deliveryCompletionUpdate,
   deliveryFailureUpdate,
+  deliverySuppressionUpdate,
   isNotificationOutboxDeliverable,
   isNotificationSendingLeaseExpired,
   nextDeliveryLeaseExpiration,
+  notificationDeliveryPreferenceSuppression,
   notificationQuietHoursDeferral,
   notificationTokenDeliveryFromSnap,
 } = require("./notificationDelivery");
@@ -2328,6 +2330,32 @@ async function processNotificationOutboxDocument(docSnap, {
 
   const serverNow = admin.firestore.FieldValue.serverTimestamp();
   const recipientUid = String(claimed.outbox.recipientUid || "").trim();
+  const [preferencesSnap, userSnap] = await Promise.all([
+    userNotificationPreferencesRef(recipientUid).get(),
+    userDocument(recipientUid).get(),
+  ]);
+  const suppression = notificationDeliveryPreferenceSuppression(
+    claimed.outbox,
+    settings,
+    buildUserNotificationPreferences({
+      preferencesDoc: preferencesSnap,
+      userDoc: userSnap,
+    }),
+  );
+  if (suppression) {
+    await claimed.ref.update({
+      ...deliverySuppressionUpdate({
+        suppression,
+        timestamp: serverNow,
+      }),
+      attemptCount: Math.max(0, claimed.attemptCount - 1),
+    });
+    return {
+      state: "suppressed",
+      reason: suppression.deliverySuppressionReason,
+    };
+  }
+
   const tokenDeliveries = await activeNotificationTokenDeliveriesForUser(recipientUid);
 
   if (!tokenDeliveries.length) {
@@ -2403,6 +2431,7 @@ exports.processNotificationOutbox = onSchedule("every 5 minutes", async () => {
     queuedCount: 0,
     failedCount: 0,
     deferredCount: 0,
+    suppressedCount: 0,
     skippedCount: 0,
   };
 
@@ -2415,6 +2444,7 @@ exports.processNotificationOutbox = onSchedule("every 5 minutes", async () => {
     else if (result.state === "queued") summary.queuedCount += 1;
     else if (result.state === "failed") summary.failedCount += 1;
     else if (result.state === "deferred") summary.deferredCount += 1;
+    else if (result.state === "suppressed") summary.suppressedCount += 1;
     else summary.skippedCount += 1;
   }
 

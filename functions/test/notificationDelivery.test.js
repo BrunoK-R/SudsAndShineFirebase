@@ -6,10 +6,12 @@ const {
   buildNotificationPushMessage,
   deliveryCompletionUpdate,
   deliveryFailureUpdate,
+  deliverySuppressionUpdate,
   isNotificationQuietHour,
   isNotificationOutboxDeliverable,
   isNotificationSendingLeaseExpired,
   nextDeliveryLeaseExpiration,
+  notificationDeliveryPreferenceSuppression,
   notificationQuietHoursDeferral,
   notificationTokenDeliveryFromSnap,
   shouldDeferNotificationForQuietHours,
@@ -168,6 +170,87 @@ test("outbox deliverability and sending leases are bounded", () => {
   assert.equal(lease.toISOString(), "2026-05-31T18:10:00.000Z");
 });
 
+test("notification delivery suppression re-checks current settings and preferences", () => {
+  const enabledSettings = notificationSettings();
+  const enabledPreferences = notificationPreferences();
+
+  assert.equal(
+    notificationDeliveryPreferenceSuppression(outbox(), enabledSettings, enabledPreferences),
+    null,
+  );
+  assert.equal(
+    notificationDeliveryPreferenceSuppression(
+      outbox(),
+      notificationSettings({templates: [{key: "booking_accepted", enabled: false}]}),
+      enabledPreferences,
+    ).deliverySuppressionReason,
+    "template-disabled",
+  );
+  assert.equal(
+    notificationDeliveryPreferenceSuppression(
+      outbox(),
+      notificationSettings({bookingStatusEnabled: false}),
+      enabledPreferences,
+    ).deliverySuppressionReason,
+    "admin-booking-status-disabled",
+  );
+  assert.equal(
+    notificationDeliveryPreferenceSuppression(
+      outbox(),
+      enabledSettings,
+      notificationPreferences({bookingStatusEnabled: false}),
+    ).deliverySuppressionReason,
+    "user-booking-status-disabled",
+  );
+  assert.equal(
+    notificationDeliveryPreferenceSuppression(
+      outbox({templateKey: "booking_reminder"}),
+      notificationSettings({appointmentReminderEnabled: false}),
+      enabledPreferences,
+    ).deliverySuppressionReason,
+    "admin-reminders-disabled",
+  );
+  assert.equal(
+    notificationDeliveryPreferenceSuppression(
+      outbox({templateKey: "booking_reminder"}),
+      enabledSettings,
+      notificationPreferences({appointmentReminderEnabled: false}),
+    ).deliverySuppressionReason,
+    "user-reminders-disabled",
+  );
+  assert.equal(
+    notificationDeliveryPreferenceSuppression(
+      outbox({templateKey: "admin_pending_booking"}),
+      notificationSettings({adminPendingAlertEnabled: false}),
+      enabledPreferences,
+    ).deliverySuppressionReason,
+    "admin-pending-alerts-disabled",
+  );
+  assert.equal(
+    notificationDeliveryPreferenceSuppression(
+      outbox({type: "admin_test_notification", templateKey: "booking_accepted"}),
+      notificationSettings({bookingStatusEnabled: false}),
+      notificationPreferences({bookingStatusEnabled: false}),
+    ),
+    null,
+  );
+});
+
+test("deliverySuppressionUpdate marks notifications terminal without send counts", () => {
+  const update = deliverySuppressionUpdate({
+    suppression: {deliverySuppressionReason: "user-booking-status-disabled"},
+    timestamp: new Date("2026-06-01T08:15:00.000Z"),
+  });
+
+  assert.equal(update.deliveryState, "suppressed");
+  assert.equal(update.deliveryLeaseExpiresAt, null);
+  assert.equal(update.deliverySuppressionReason, "user-booking-status-disabled");
+  assert.equal(update.deliveryResult.tokenCount, 0);
+  assert.equal(update.deliveryResult.successCount, 0);
+  assert.equal(update.deliveryResult.lastErrorCode, "user-booking-status-disabled");
+  assert.equal(update.suppressedAt.toISOString(), "2026-06-01T08:15:00.000Z");
+});
+
 test("notification quiet hours support overnight and same-day windows", () => {
   const overnightSettings = {
     quietHoursStart: "22:00",
@@ -282,6 +365,33 @@ function outbox(overrides = {}) {
     deliveryState: "queued",
     attemptCount: 0,
     dedupeKey: "booking_accepted:reservation-1",
+    ...overrides,
+  };
+}
+
+function notificationSettings(overrides = {}) {
+  const {templates: templateOverrides = [], ...settingOverrides} = overrides;
+  const templates = [
+    {key: "booking_accepted", enabled: true},
+    {key: "booking_reminder", enabled: true},
+    {key: "admin_pending_booking", enabled: true},
+  ];
+  const overrideTemplates = new Map(templateOverrides.map((template) => [template.key, template]));
+  return {
+    bookingStatusEnabled: true,
+    appointmentReminderEnabled: true,
+    adminPendingAlertEnabled: true,
+    templates: templates.map((template) => overrideTemplates.get(template.key) || template),
+    ...settingOverrides,
+  };
+}
+
+function notificationPreferences(overrides = {}) {
+  return {
+    bookingStatusEnabled: true,
+    appointmentReminderEnabled: true,
+    loyaltyEnabled: true,
+    marketingEnabled: false,
     ...overrides,
   };
 }

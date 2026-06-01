@@ -4,6 +4,17 @@ const MAX_DELIVERY_ATTEMPTS = 5;
 const DELIVERY_LEASE_MINUTES = 10;
 const NOTIFICATION_QUIET_HOURS_TIME_ZONE = "Europe/Lisbon";
 const MINUTES_PER_DAY = 24 * 60;
+const BOOKING_STATUS_DELIVERY_TEMPLATE_KEYS = new Set([
+  "booking_request",
+  "booking_accepted",
+  "booking_rejected",
+  "booking_expired",
+  "booking_cancelled",
+  "booking_rescheduled",
+  "review_prompt",
+]);
+const ADMIN_PENDING_BOOKING_TEMPLATE_KEY = "admin_pending_booking";
+const BOOKING_REMINDER_TEMPLATE_KEY = "booking_reminder";
 
 const TERMINAL_TOKEN_ERROR_CODES = new Set([
   "messaging/invalid-registration-token",
@@ -99,6 +110,11 @@ function shouldBypassNotificationQuietHours(outbox = {}) {
     outbox.preferencesSnapshot?.adminTestOnly === true;
 }
 
+function shouldBypassNotificationPreferenceSuppression(outbox = {}) {
+  return cleanDeliveryText(outbox.type, 80) === "admin_test_notification" ||
+    outbox.preferencesSnapshot?.adminTestOnly === true;
+}
+
 function minutesUntilQuietHourEnd(
   settings = {},
   now = new Date(),
@@ -150,6 +166,72 @@ function shouldDeferNotificationForQuietHours(
   timeZone = NOTIFICATION_QUIET_HOURS_TIME_ZONE,
 ) {
   return notificationQuietHoursDeferral(outbox, settings, now, timeZone) !== null;
+}
+
+function templateEnabledForDelivery(settings = {}, templateKey = "") {
+  const template = (settings.templates || []).find((item) => item?.key === templateKey);
+  return template && template.enabled !== false;
+}
+
+function notificationDeliveryPreferenceSuppression(outbox = {}, settings = {}, preferences = {}) {
+  if (!isNotificationOutboxDeliverable(outbox) || shouldBypassNotificationPreferenceSuppression(outbox)) {
+    return null;
+  }
+
+  const templateKey = cleanDeliveryText(outbox.templateKey, 80);
+  if (!templateEnabledForDelivery(settings, templateKey)) {
+    return {
+      deliveryState: "suppressed",
+      deliverySuppressionReason: "template-disabled",
+    };
+  }
+
+  if (BOOKING_STATUS_DELIVERY_TEMPLATE_KEYS.has(templateKey)) {
+    if (settings.bookingStatusEnabled === false) {
+      return {
+        deliveryState: "suppressed",
+        deliverySuppressionReason: "admin-booking-status-disabled",
+      };
+    }
+    if (preferences.bookingStatusEnabled === false) {
+      return {
+        deliveryState: "suppressed",
+        deliverySuppressionReason: "user-booking-status-disabled",
+      };
+    }
+    return null;
+  }
+
+  if (templateKey === BOOKING_REMINDER_TEMPLATE_KEY) {
+    if (settings.appointmentReminderEnabled === false) {
+      return {
+        deliveryState: "suppressed",
+        deliverySuppressionReason: "admin-reminders-disabled",
+      };
+    }
+    if (preferences.appointmentReminderEnabled === false) {
+      return {
+        deliveryState: "suppressed",
+        deliverySuppressionReason: "user-reminders-disabled",
+      };
+    }
+    return null;
+  }
+
+  if (templateKey === ADMIN_PENDING_BOOKING_TEMPLATE_KEY) {
+    if (settings.adminPendingAlertEnabled === false) {
+      return {
+        deliveryState: "suppressed",
+        deliverySuppressionReason: "admin-pending-alerts-disabled",
+      };
+    }
+    return null;
+  }
+
+  return {
+    deliveryState: "suppressed",
+    deliverySuppressionReason: "unknown-template",
+  };
 }
 
 function notificationTokenDeliveryFromSnap(tokenSnap, recipientUid) {
@@ -248,6 +330,30 @@ function deliveryFailureUpdate({
   return update;
 }
 
+function deliverySuppressionUpdate({
+  suppression,
+  timestamp = new Date(),
+} = {}) {
+  const reason = cleanDeliveryText(suppression?.deliverySuppressionReason, 120) ||
+    "delivery-suppressed";
+  return {
+    deliveryState: "suppressed",
+    deliveryLeaseExpiresAt: null,
+    deliverySuppressionReason: reason,
+    deliveryResult: {
+      tokenCount: 0,
+      successCount: 0,
+      failureCount: 0,
+      invalidTokenCount: 0,
+      retryableFailureCount: 0,
+      lastErrorCode: reason,
+      lastErrorMessage: "Notification delivery suppressed by current settings or preferences",
+    },
+    suppressedAt: timestamp,
+    updatedAt: timestamp,
+  };
+}
+
 function deliveryCompletionUpdate({
   response,
   tokenDeliveries,
@@ -319,10 +425,12 @@ module.exports = {
   buildNotificationPushMessage,
   deliveryCompletionUpdate,
   deliveryFailureUpdate,
+  deliverySuppressionUpdate,
   isNotificationQuietHour,
   isNotificationOutboxDeliverable,
   isNotificationSendingLeaseExpired,
   nextDeliveryLeaseExpiration,
+  notificationDeliveryPreferenceSuppression,
   notificationQuietHoursDeferral,
   notificationTokenDeliveryFromSnap,
   shouldDeferNotificationForQuietHours,
