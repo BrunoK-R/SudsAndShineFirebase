@@ -72,13 +72,13 @@ const {
   assertReservationCancelable,
   assertReservationId,
 } = require("./reservationCancellation");
+const adminRoles = require("./adminRoles");
 const {
   assertReservationReschedulable,
   docsExcludingReservation,
   validateRescheduleReservationInput,
 } = require("./reservationReschedule");
 const {
-  assertAdminRole,
   assertPendingReservationActionable,
   assertReservationCompletable,
   buildAdminCompletableReservations,
@@ -160,37 +160,12 @@ function assertString(value, fieldName) {
   }
 }
 
-async function userRoleFromAuth(context) {
-  const auth = context.auth;
-  if (!auth) return null;
-  return auth.token.role || null;
-}
-
 async function getAllowlistedRole(email) {
-  const snap = await db.collection("admin_allowlist").doc(email).get();
-  if (!snap.exists) return null;
-  const role = snap.get("role");
-  if (role === "admin" || role === "employee") return role;
-  return null;
-}
-
-async function effectiveRoleFromRequest(request) {
-  const tokenRole = await userRoleFromAuth(request);
-  if (tokenRole === "admin" || tokenRole === "employee") return tokenRole;
-
-  const email = authenticatedEmail(request);
-  if (!email) return null;
-  return getAllowlistedRole(email);
+  return adminRoles.getAllowlistedRole(db, email);
 }
 
 async function assertAdminRequest(request) {
-  if (!request.auth) {
-    throw new HttpsError("unauthenticated", "Authentication required");
-  }
-
-  const role = await effectiveRoleFromRequest(request);
-  assertAdminRole(role);
-  return role;
+  return adminRoles.assertAdminRequest(db, request);
 }
 
 function assertAuthenticatedUid(request) {
@@ -328,7 +303,7 @@ function maybeLimitQuery(query, limit) {
 }
 
 function authenticatedEmail(request) {
-  return String(request.auth?.token?.email || "").trim().toLowerCase();
+  return adminRoles.authenticatedEmail(request);
 }
 
 function userReservationQueries(uid, email, {limit = USER_HISTORY_RESERVATION_LIMIT} = {}) {
@@ -2223,14 +2198,7 @@ exports.completeReservation = onCall(async (request) => {
 });
 
 exports.assignAdminRole = onCall(async (request) => {
-  if (!request.auth) {
-    throw new HttpsError("unauthenticated", "Authentication required");
-  }
-
-  const callerRole = await userRoleFromAuth(request);
-  if (callerRole !== "admin") {
-    throw new HttpsError("permission-denied", "Admin role required");
-  }
+  await assertAdminRequest(request);
 
   assertString(request.data.email, "email");
   assertString(request.data.role, "role");
