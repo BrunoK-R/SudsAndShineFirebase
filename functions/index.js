@@ -81,6 +81,7 @@ const {
   assertAdminRole,
   assertPendingReservationActionable,
   assertReservationCompletable,
+  buildAdminCompletableReservations,
   buildAdminPendingReservations,
   validateAdminReservationActionInput,
 } = require("./reservationAdmin");
@@ -1444,6 +1445,22 @@ exports.getAdminPendingReservations = onCall(async (request) => {
   ]);
 
   return buildAdminPendingReservations({
+    reservationDocs: reservationsSnap.docs,
+    serviceDocs: servicesSnap.docs,
+  });
+});
+
+exports.getAdminCompletableReservations = onCall(async (request) => {
+  await assertAdminRequest(request);
+
+  const [servicesSnap, reservationsSnap] = await Promise.all([
+    db.collection("services").get(),
+    db.collection("reservations")
+      .where("status", "in", ["confirmed", "confirmado", "in_progress", "em_execucao", "em execução"])
+      .get(),
+  ]);
+
+  return buildAdminCompletableReservations({
     reservationDocs: reservationsSnap.docs,
     serviceDocs: servicesSnap.docs,
   });

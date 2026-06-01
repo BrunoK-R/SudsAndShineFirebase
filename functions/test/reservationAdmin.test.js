@@ -2,6 +2,7 @@ const assert = require("node:assert/strict");
 const test = require("node:test");
 const {
   assertAdminRole,
+  buildAdminCompletableReservations,
   assertPendingReservationActionable,
   assertReservationCompletable,
   buildAdminPendingReservations,
@@ -92,6 +93,61 @@ test("buildAdminPendingReservations returns only active pending requests sorted 
   assert.equal(requests[0].serviceName, "Lavagem Premium");
   assert.equal(requests[1].priceCents, 4900);
   assert.equal(requests[1].notes, "Portão lateral");
+});
+
+test("buildAdminCompletableReservations returns past confirmed jobs sorted by slot", () => {
+  const requests = buildAdminCompletableReservations({
+    now: new Date("2026-05-20T12:00:00.000Z"),
+    serviceDocs: [
+      doc("premium", {
+        name: "Lavagem Premium",
+        passengerPriceCents: 3200,
+        suvPriceCents: 3400,
+      }),
+    ],
+    reservationDocs: [
+      doc("future", {
+        reservationCode: "SS-FUTURE",
+        customerName: "Ana",
+        serviceId: "premium",
+        slotStart: "2026-05-20T12:30:00.000Z",
+        slotEnd: "2026-05-20T13:15:00.000Z",
+        status: "confirmed",
+        vehicleType: "passageiros",
+      }),
+      doc("later", {
+        reservationCode: "SS-LATER",
+        customerName: "Bruno",
+        serviceId: "premium",
+        slotStart: "2026-05-20T10:00:00.000Z",
+        slotEnd: "2026-05-20T10:45:00.000Z",
+        status: "in_progress",
+        vehicleType: "suv",
+        extras: [{id: "wax", name: "Enceramento", priceCents: 1500}],
+      }),
+      doc("earlier", {
+        reservationCode: "SS-EARLIER",
+        customerName: "Carla",
+        serviceId: "premium",
+        slotStart: "2026-05-20T08:00:00.000Z",
+        slotEnd: "2026-05-20T08:45:00.000Z",
+        status: "confirmed",
+        vehicleType: "passageiros",
+      }),
+      doc("pending", {
+        serviceId: "premium",
+        slotStart: "2026-05-20T07:00:00.000Z",
+        slotEnd: "2026-05-20T07:45:00.000Z",
+        status: "pending",
+        vehicleType: "passageiros",
+      }),
+    ],
+  }).requests;
+
+  assert.deepEqual(requests.map((item) => item.id), ["earlier", "later"]);
+  assert.equal(requests[0].status, "confirmed");
+  assert.equal(requests[1].status, "in_progress");
+  assert.equal(requests[1].priceCents, 4900);
 });
 
 test("assertPendingReservationActionable rejects expired and non-pending requests", () => {
