@@ -3,6 +3,7 @@ const {buildUserNotificationPreferences} = require("./notificationPreferences");
 
 const NOTIFICATION_OUTBOX_COLLECTION = "notification_outbox";
 const ADMIN_PENDING_BOOKING_TEMPLATE_KEY = "admin_pending_booking";
+const LOYALTY_REWARD_TEMPLATE_KEY = "loyalty_reward";
 const BOOKING_STATUS_TEMPLATE_KEYS = new Set([
   "booking_request",
   "booking_accepted",
@@ -58,6 +59,9 @@ function isTemplateGloballyEnabled(settings, templateKey) {
   if (templateKey === "review_prompt") {
     return settings.bookingStatusEnabled !== false;
   }
+  if (templateKey === LOYALTY_REWARD_TEMPLATE_KEY) {
+    return settings.loyaltyEnabled !== false;
+  }
   return false;
 }
 
@@ -70,6 +74,9 @@ function isUserPreferenceEnabled(preferences, templateKey) {
   }
   if (templateKey === ADMIN_PENDING_BOOKING_TEMPLATE_KEY) {
     return preferences.adminPendingAlertEnabled !== false;
+  }
+  if (templateKey === LOYALTY_REWARD_TEMPLATE_KEY) {
+    return preferences.loyaltyEnabled !== false;
   }
   return false;
 }
@@ -108,6 +115,17 @@ function adminTestNotificationVariables() {
   };
 }
 
+function loyaltyRewardVariables(redemptionId, redemption) {
+  return {
+    redemptionId,
+    rewardCode: cleanReservationText(redemption?.rewardCode, 80),
+    rewardNumber: cleanReservationText(redemption?.rewardNumber, 20),
+    rewardType: cleanReservationText(redemption?.rewardType, 80),
+    rewardValue: cleanReservationText(redemption?.rewardValue, 40),
+    rewardDescription: cleanReservationText(redemption?.rewardDescription || "recompensa", 200),
+  };
+}
+
 function isReviewPromptReservationDue(reservation, now = new Date()) {
   const customerUid = cleanReservationText(reservation?.customerUid, 128);
   if (!customerUid) return false;
@@ -143,6 +161,7 @@ function notificationTypeForTemplateKey(templateKey) {
   if (templateKey === ADMIN_PENDING_BOOKING_TEMPLATE_KEY) return "admin_pending_booking";
   if (templateKey === "review_prompt") return "review_prompt";
   if (templateKey === "booking_reminder") return "booking_reminder";
+  if (templateKey === LOYALTY_REWARD_TEMPLATE_KEY) return "loyalty_reward";
   return "booking_status";
 }
 
@@ -265,6 +284,61 @@ function buildAdminPendingBookingNotificationOutboxDocument({
     preferencesSnapshot: {
       adminPendingAlertEnabled: settings.adminPendingAlertEnabled !== false,
       recipientAdminPendingAlertEnabled: preferences.adminPendingAlertEnabled !== false,
+    },
+  };
+}
+
+function buildLoyaltyRewardNotificationOutboxDocument({
+  redemptionId,
+  redemption,
+  settings,
+  preferences,
+  actorUid = "",
+  timestamp = null,
+} = {}) {
+  const recipientUid = cleanReservationText(redemption?.ownerUid, 128);
+  const normalizedRedemptionId = cleanReservationText(redemptionId, 160);
+  if (!recipientUid || !normalizedRedemptionId) return null;
+  if (!isTemplateGloballyEnabled(settings, LOYALTY_REWARD_TEMPLATE_KEY)) return null;
+  if (!isUserPreferenceEnabled(preferences, LOYALTY_REWARD_TEMPLATE_KEY)) return null;
+
+  const template = templateForKey(settings, LOYALTY_REWARD_TEMPLATE_KEY);
+  if (!template || template.enabled === false) return null;
+
+  const variables = loyaltyRewardVariables(normalizedRedemptionId, redemption || {});
+  const title = interpolateTemplateText(template.title, variables);
+  const body = interpolateTemplateText(template.body, variables);
+  if (!title || !body) return null;
+
+  const now = timestamp || new Date();
+  return {
+    type: "loyalty_reward",
+    templateKey: LOYALTY_REWARD_TEMPLATE_KEY,
+    recipientUid,
+    redemptionId: normalizedRedemptionId,
+    rewardCode: variables.rewardCode,
+    rewardNumber: variables.rewardNumber,
+    rewardType: variables.rewardType,
+    rewardValue: variables.rewardValue,
+    rewardDescription: variables.rewardDescription,
+    title,
+    body,
+    channels: ["push"],
+    deliveryState: "queued",
+    attemptCount: 0,
+    dedupeKey: `${LOYALTY_REWARD_TEMPLATE_KEY}:${normalizedRedemptionId}`,
+    createdAt: now,
+    updatedAt: now,
+    createdByUid: cleanReservationText(actorUid, 128) || "system",
+    source: "loyalty-reward",
+    templateSnapshot: {
+      key: template.key,
+      title: template.title,
+      body: template.body,
+    },
+    preferencesSnapshot: {
+      loyaltyEnabled: preferences.loyaltyEnabled !== false,
+      marketingEnabled: preferences.marketingEnabled === true,
     },
   };
 }
@@ -449,17 +523,57 @@ function enqueueAdminPendingBookingNotification(tx, {
   return document;
 }
 
+function enqueueLoyaltyRewardNotification(tx, {
+  db,
+  redemptionId,
+  redemption,
+  notificationSettingsSnap = null,
+  userPreferencesSnap = null,
+  userDocSnap = null,
+  existingOutboxSnap = null,
+  actorUid = "",
+  timestamp = null,
+} = {}) {
+  const settings = buildNotificationSettings(notificationSettingsSnap);
+  const preferences = buildUserNotificationPreferences({
+    preferencesDoc: userPreferencesSnap,
+    userDoc: userDocSnap,
+  });
+  const document = buildLoyaltyRewardNotificationOutboxDocument({
+    redemptionId,
+    redemption,
+    settings,
+    preferences,
+    actorUid,
+    timestamp,
+  });
+
+  if (!document) return null;
+  if (existingOutboxSnap?.exists) return null;
+
+  tx.set(
+    db.collection(NOTIFICATION_OUTBOX_COLLECTION).doc(
+      notificationOutboxDocId(LOYALTY_REWARD_TEMPLATE_KEY, redemptionId),
+    ),
+    document,
+  );
+  return document;
+}
+
 module.exports = {
   ADMIN_PENDING_BOOKING_TEMPLATE_KEY,
   BOOKING_REMINDER_RESERVATION_STATUS_VALUES,
+  LOYALTY_REWARD_TEMPLATE_KEY,
   NOTIFICATION_OUTBOX_COLLECTION,
   REVIEW_PROMPT_RESERVATION_STATUS_VALUES,
   adminNotificationOutboxDocId,
   buildAdminCampaignDraftTestNotificationOutboxDocument,
   buildAdminPendingBookingNotificationOutboxDocument,
   buildAdminTestNotificationOutboxDocument,
+  buildLoyaltyRewardNotificationOutboxDocument,
   buildReservationNotificationOutboxDocument,
   enqueueAdminPendingBookingNotification,
+  enqueueLoyaltyRewardNotification,
   enqueueReservationNotification,
   isBookingReminderReservationDue,
   isReviewPromptReservationDue,

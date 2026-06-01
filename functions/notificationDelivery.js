@@ -15,6 +15,7 @@ const BOOKING_STATUS_DELIVERY_TEMPLATE_KEYS = new Set([
 ]);
 const ADMIN_PENDING_BOOKING_TEMPLATE_KEY = "admin_pending_booking";
 const BOOKING_REMINDER_TEMPLATE_KEY = "booking_reminder";
+const LOYALTY_REWARD_TEMPLATE_KEY = "loyalty_reward";
 
 const TERMINAL_TOKEN_ERROR_CODES = new Set([
   "messaging/invalid-registration-token",
@@ -248,6 +249,22 @@ function notificationDeliveryPreferenceSuppression(outbox = {}, settings = {}, p
     return null;
   }
 
+  if (templateKey === LOYALTY_REWARD_TEMPLATE_KEY) {
+    if (settings.loyaltyEnabled === false) {
+      return {
+        deliveryState: "suppressed",
+        deliverySuppressionReason: "admin-loyalty-disabled",
+      };
+    }
+    if (preferences.loyaltyEnabled === false) {
+      return {
+        deliveryState: "suppressed",
+        deliverySuppressionReason: "user-loyalty-disabled",
+      };
+    }
+    return null;
+  }
+
   return {
     deliveryState: "suppressed",
     deliverySuppressionReason: "unknown-template",
@@ -290,6 +307,7 @@ function buildNotificationPushMessage(outbox, tokenDeliveries) {
       templateKey: pushDataValue(outbox.templateKey, 80),
       reservationId: pushDataValue(outbox.reservationId, 160),
       reservationCode: pushDataValue(outbox.reservationCode, 40),
+      redemptionId: pushDataValue(outbox.redemptionId, 160),
       dedupeKey: pushDataValue(outbox.dedupeKey, 220),
       source: "notification_outbox",
     },

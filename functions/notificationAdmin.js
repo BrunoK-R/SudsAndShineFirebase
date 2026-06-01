@@ -9,11 +9,13 @@ const TEMPLATE_KEYS = [
   "booking_rescheduled",
   "booking_reminder",
   "review_prompt",
+  "loyalty_reward",
   "admin_pending_booking",
 ];
 const BACKWARD_COMPATIBLE_TEMPLATE_KEYS = new Set([
   "booking_cancelled",
   "booking_rescheduled",
+  "loyalty_reward",
   "admin_pending_booking",
 ]);
 
@@ -73,6 +75,13 @@ const DEFAULT_NOTIFICATION_TEMPLATES = [
     enabled: true,
     title: "Como correu a lavagem?",
     body: "Avalie o serviço para nos ajudar a melhorar.",
+  },
+  {
+    key: "loyalty_reward",
+    label: "Recompensa de fidelização",
+    enabled: true,
+    title: "Recompensa disponível",
+    body: "A sua recompensa {{rewardDescription}} está pronta. Use o código {{rewardCode}} na próxima marcação.",
   },
   {
     key: "admin_pending_booking",

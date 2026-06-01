@@ -24,6 +24,10 @@ test("buildNotificationSettings returns safe defaults when no settings exist", (
   assert.equal(settings.templates.find((template) => template.key === "booking_cancelled").title, "Marcação cancelada");
   assert.equal(settings.templates.find((template) => template.key === "booking_rescheduled").enabled, true);
   assert.equal(
+    settings.templates.find((template) => template.key === "loyalty_reward").title,
+    "Recompensa disponível",
+  );
+  assert.equal(
     settings.templates.find((template) => template.key === "admin_pending_booking").title,
     "Novo pedido de marcação",
   );
@@ -127,7 +131,10 @@ test("validateNotificationSettingsUpdateInput sanitizes admin settings", () => {
 
 test("validateNotificationSettingsUpdateInput backfills newly added templates", () => {
   const legacyTemplateKeys = TEMPLATE_KEYS.filter((key) =>
-    key !== "booking_cancelled" && key !== "booking_rescheduled" && key !== "admin_pending_booking",
+    key !== "booking_cancelled" &&
+      key !== "booking_rescheduled" &&
+      key !== "loyalty_reward" &&
+      key !== "admin_pending_booking",
   );
   const settings = validateNotificationSettingsUpdateInput({
     ...validPayload(),
@@ -143,6 +150,10 @@ test("validateNotificationSettingsUpdateInput backfills newly added templates", 
   assert.equal(
     settings.templates.find((template) => template.key === "admin_pending_booking").body,
     "{{customerName}} pediu {{serviceName}} para {{slotStart}}.",
+  );
+  assert.equal(
+    settings.templates.find((template) => template.key === "loyalty_reward").body,
+    "A sua recompensa {{rewardDescription}} está pronta. Use o código {{rewardCode}} na próxima marcação.",
   );
 });
 

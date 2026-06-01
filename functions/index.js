@@ -124,6 +124,7 @@ const {
   NOTIFICATION_OUTBOX_COLLECTION,
   REVIEW_PROMPT_RESERVATION_STATUS_VALUES,
   enqueueAdminPendingBookingNotification,
+  enqueueLoyaltyRewardNotification,
   enqueueReservationNotification,
   buildAdminCampaignDraftTestNotificationOutboxDocument,
   buildAdminTestNotificationOutboxDocument,
@@ -826,6 +827,20 @@ exports.redeemMyLoyaltyReward = onCall(async (request) => {
       throw new HttpsError("already-exists", "Loyalty reward has already been claimed");
     }
 
+    const notificationOutboxRef = db.collection(NOTIFICATION_OUTBOX_COLLECTION)
+      .doc(notificationOutboxDocId("loyalty_reward", redemptionRef.id));
+    const [
+      notificationSettingsSnap,
+      notificationPreferencesSnap,
+      notificationUserSnap,
+      notificationOutboxSnap,
+    ] = await Promise.all([
+      tx.get(notificationSettingsRef()),
+      tx.get(userNotificationPreferencesRef(uid)),
+      tx.get(userDocument(uid)),
+      tx.get(notificationOutboxRef),
+    ]);
+
     const rewardCode = buildLoyaltyRewardCode(uid, rewardNumber);
     const now = new Date();
     const redemptionData = {
@@ -850,6 +865,17 @@ exports.redeemMyLoyaltyReward = onCall(async (request) => {
     };
 
     tx.set(redemptionRef, redemptionData);
+    enqueueLoyaltyRewardNotification(tx, {
+      db,
+      redemptionId: redemptionRef.id,
+      redemption: redemptionData,
+      notificationSettingsSnap,
+      userPreferencesSnap: notificationPreferencesSnap,
+      userDocSnap: notificationUserSnap,
+      existingOutboxSnap: notificationOutboxSnap,
+      actorUid: uid,
+      timestamp: admin.firestore.FieldValue.serverTimestamp(),
+    });
 
     redemption = {
       id: redemptionRef.id,

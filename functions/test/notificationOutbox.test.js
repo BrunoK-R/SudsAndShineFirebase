@@ -4,14 +4,17 @@ const {buildNotificationSettings} = require("../notificationAdmin");
 const {
   ADMIN_PENDING_BOOKING_TEMPLATE_KEY,
   BOOKING_REMINDER_RESERVATION_STATUS_VALUES,
+  LOYALTY_REWARD_TEMPLATE_KEY,
   NOTIFICATION_OUTBOX_COLLECTION,
   REVIEW_PROMPT_RESERVATION_STATUS_VALUES,
   adminNotificationOutboxDocId,
   buildAdminCampaignDraftTestNotificationOutboxDocument,
   buildAdminPendingBookingNotificationOutboxDocument,
   buildAdminTestNotificationOutboxDocument,
+  buildLoyaltyRewardNotificationOutboxDocument,
   buildReservationNotificationOutboxDocument,
   enqueueAdminPendingBookingNotification,
+  enqueueLoyaltyRewardNotification,
   enqueueReservationNotification,
   isBookingReminderReservationDue,
   isReviewPromptReservationDue,
@@ -290,6 +293,89 @@ test("buildReservationNotificationOutboxDocument queues reminder payloads withou
   assert.equal(payload.preferencesSnapshot.appointmentReminderEnabled, true);
   assert.equal(Object.hasOwn(payload, "token"), false);
   assert.equal(optedOut, null);
+});
+
+test("buildLoyaltyRewardNotificationOutboxDocument queues loyalty rewards without token exposure", () => {
+  const settings = buildNotificationSettings(doc({
+    value: {
+      loyaltyEnabled: true,
+      templates: [
+        {
+          key: LOYALTY_REWARD_TEMPLATE_KEY,
+          enabled: true,
+          title: "Reward {{rewardCode}}",
+          body: "{{rewardDescription}} is ready.",
+        },
+      ],
+    },
+  }));
+  const preferences = {
+    bookingStatusEnabled: true,
+    appointmentReminderEnabled: true,
+    loyaltyEnabled: true,
+    marketingEnabled: false,
+  };
+
+  const payload = buildLoyaltyRewardNotificationOutboxDocument({
+    redemptionId: "reward-0001",
+    redemption: loyaltyRedemption({
+      rewardCode: "SS-FREE-UID1-0001",
+      rewardDescription: "1 lavagem grátis",
+    }),
+    settings,
+    preferences,
+    actorUid: "user-1",
+    timestamp: new Date("2026-06-01T10:00:00.000Z"),
+  });
+  const optedOut = buildLoyaltyRewardNotificationOutboxDocument({
+    redemptionId: "reward-0001",
+    redemption: loyaltyRedemption(),
+    settings,
+    preferences: {
+      ...preferences,
+      loyaltyEnabled: false,
+    },
+  });
+
+  assert.equal(payload.type, "loyalty_reward");
+  assert.equal(payload.templateKey, LOYALTY_REWARD_TEMPLATE_KEY);
+  assert.equal(payload.recipientUid, "user-1");
+  assert.equal(payload.redemptionId, "reward-0001");
+  assert.equal(payload.title, "Reward SS-FREE-UID1-0001");
+  assert.equal(payload.body, "1 lavagem grátis is ready.");
+  assert.equal(payload.preferencesSnapshot.loyaltyEnabled, true);
+  assert.equal(Object.hasOwn(payload, "token"), false);
+  assert.equal(optedOut, null);
+});
+
+test("enqueueLoyaltyRewardNotification writes deterministic loyalty outbox document", () => {
+  const tx = fakeTx();
+  const db = fakeDb();
+  const queued = enqueueLoyaltyRewardNotification(tx, {
+    db,
+    redemptionId: "reward-0001",
+    redemption: loyaltyRedemption(),
+    notificationSettingsSnap: doc({
+      value: {
+        loyaltyEnabled: true,
+      },
+    }),
+    userPreferencesSnap: doc({
+      bookingStatusEnabled: true,
+      appointmentReminderEnabled: true,
+      loyaltyEnabled: true,
+      marketingEnabled: false,
+    }),
+    actorUid: "user-1",
+    timestamp: new Date("2026-06-01T10:05:00.000Z"),
+  });
+
+  assert.equal(queued.templateKey, LOYALTY_REWARD_TEMPLATE_KEY);
+  assert.equal(tx.writes.length, 1);
+  assert.deepEqual(tx.writes[0], {
+    path: `${NOTIFICATION_OUTBOX_COLLECTION}/${notificationOutboxDocId(LOYALTY_REWARD_TEMPLATE_KEY, "reward-0001")}`,
+    data: queued,
+  });
 });
 
 test("buildAdminPendingBookingNotificationOutboxDocument queues admin alerts without customer preferences", () => {
@@ -621,6 +707,18 @@ function reservation(overrides = {}) {
     slotStart: "2026-06-01T10:00:00.000Z",
     slotEnd: "2026-06-01T11:00:00.000Z",
     status: "pending",
+    ...overrides,
+  };
+}
+
+function loyaltyRedemption(overrides = {}) {
+  return {
+    ownerUid: "user-1",
+    rewardCode: "SS-FREE-UID1-0001",
+    rewardNumber: 1,
+    rewardType: "free_wash",
+    rewardValue: 1,
+    rewardDescription: "1 lavagem grátis",
     ...overrides,
   };
 }

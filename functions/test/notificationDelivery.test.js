@@ -65,6 +65,7 @@ test("buildNotificationPushMessage builds token-scoped booking payload", () => {
   assert.equal(message.data.type, "booking_status");
   assert.equal(message.data.templateKey, "booking_accepted");
   assert.equal(message.data.reservationId, "reservation-1");
+  assert.equal(message.data.redemptionId, "");
   assert.equal(message.data.source, "notification_outbox");
   assert.equal(message.android.priority, "high");
   assert.equal(message.apns.payload.aps.sound, "default");
@@ -236,6 +237,22 @@ test("notification delivery suppression re-checks current settings and preferenc
   );
   assert.equal(
     notificationDeliveryPreferenceSuppression(
+      outbox({type: "loyalty_reward", templateKey: "loyalty_reward", redemptionId: "reward-0001"}),
+      notificationSettings({loyaltyEnabled: false}),
+      enabledPreferences,
+    ).deliverySuppressionReason,
+    "admin-loyalty-disabled",
+  );
+  assert.equal(
+    notificationDeliveryPreferenceSuppression(
+      outbox({type: "loyalty_reward", templateKey: "loyalty_reward", redemptionId: "reward-0001"}),
+      enabledSettings,
+      notificationPreferences({loyaltyEnabled: false}),
+    ).deliverySuppressionReason,
+    "user-loyalty-disabled",
+  );
+  assert.equal(
+    notificationDeliveryPreferenceSuppression(
       outbox({type: "admin_test_notification", templateKey: "booking_accepted"}),
       notificationSettings({bookingStatusEnabled: false}),
       notificationPreferences({bookingStatusEnabled: false}),
@@ -387,12 +404,14 @@ function notificationSettings(overrides = {}) {
   const templates = [
     {key: "booking_accepted", enabled: true},
     {key: "booking_reminder", enabled: true},
+    {key: "loyalty_reward", enabled: true},
     {key: "admin_pending_booking", enabled: true},
   ];
   const overrideTemplates = new Map(templateOverrides.map((template) => [template.key, template]));
   return {
     bookingStatusEnabled: true,
     appointmentReminderEnabled: true,
+    loyaltyEnabled: true,
     adminPendingAlertEnabled: true,
     templates: templates.map((template) => overrideTemplates.get(template.key) || template),
     ...settingOverrides,
