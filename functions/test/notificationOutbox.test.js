@@ -7,6 +7,7 @@ const {
   NOTIFICATION_OUTBOX_COLLECTION,
   REVIEW_PROMPT_RESERVATION_STATUS_VALUES,
   adminNotificationOutboxDocId,
+  buildAdminCampaignDraftTestNotificationOutboxDocument,
   buildAdminPendingBookingNotificationOutboxDocument,
   buildAdminTestNotificationOutboxDocument,
   buildReservationNotificationOutboxDocument,
@@ -457,6 +458,33 @@ test("buildAdminTestNotificationOutboxDocument queues current-admin test without
   assert.equal(payload.body, "Cliente de teste pediu Lavagem completa para 2026-06-01 10:00.");
   assert.equal(payload.notificationCreatedByUid, "admin-1");
   assert.equal(payload.preferencesSnapshot.adminTestOnly, true);
+  assert.equal(Object.hasOwn(payload, "token"), false);
+});
+
+test("buildAdminCampaignDraftTestNotificationOutboxDocument queues campaign preview to current admin only", () => {
+  const payload = buildAdminCampaignDraftTestNotificationOutboxDocument({
+    campaign: {
+      campaignId: "summer-test",
+      title: "Oferta de teste",
+      body: "Mensagem segura para preview.",
+      targetAudience: "marketing_opt_in_users",
+      status: "draft",
+      sendBlockedReason: "campaign-send-not-implemented",
+    },
+    recipientUid: "admin-1",
+    actorUid: "admin-1",
+    timestamp: new Date("2026-06-01T08:05:00.000Z"),
+  });
+
+  assert.equal(payload.type, "admin_test_notification");
+  assert.equal(payload.templateKey, "campaign_draft");
+  assert.equal(payload.campaignId, "summer-test");
+  assert.equal(payload.recipientUid, "admin-1");
+  assert.equal(payload.title, "Oferta de teste");
+  assert.equal(payload.body, "Mensagem segura para preview.");
+  assert.equal(payload.campaignSnapshot.targetAudience, "marketing_opt_in_users");
+  assert.equal(payload.preferencesSnapshot.adminTestOnly, true);
+  assert.equal(payload.preferencesSnapshot.campaignDraftTest, true);
   assert.equal(Object.hasOwn(payload, "token"), false);
 });
 

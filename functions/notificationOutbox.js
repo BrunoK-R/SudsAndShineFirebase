@@ -323,6 +323,58 @@ function buildAdminTestNotificationOutboxDocument({
   };
 }
 
+function buildAdminCampaignDraftTestNotificationOutboxDocument({
+  campaign,
+  recipientUid,
+  actorUid = "",
+  timestamp = null,
+} = {}) {
+  const normalizedRecipientUid = cleanReservationText(recipientUid, 128);
+  const campaignId = cleanReservationText(campaign?.campaignId, 80);
+  const title = cleanReservationText(campaign?.title, 120);
+  const body = cleanReservationText(campaign?.body, 1000);
+  if (!normalizedRecipientUid || !campaignId || !title || !body) return null;
+
+  const now = timestamp || new Date();
+  const normalizedActorUid = cleanReservationText(actorUid, 128) || normalizedRecipientUid;
+  return {
+    type: "admin_test_notification",
+    templateKey: "campaign_draft",
+    campaignId,
+    recipientUid: normalizedRecipientUid,
+    title,
+    body,
+    channels: ["push"],
+    deliveryState: "queued",
+    attemptCount: 0,
+    dedupeKey: `admin_campaign_test:${campaignId}:${normalizedRecipientUid}:${now.getTime()}`,
+    createdAt: now,
+    updatedAt: now,
+    createdByUid: normalizedActorUid,
+    notificationCreatedByUid: normalizedActorUid,
+    source: "admin-campaign-test-notification",
+    templateSnapshot: {
+      key: "campaign_draft",
+      title,
+      body,
+      campaignId,
+    },
+    campaignSnapshot: {
+      campaignId,
+      title,
+      body,
+      targetAudience: cleanReservationText(campaign?.targetAudience, 80) || "test_users",
+      status: cleanReservationText(campaign?.status, 40) || "draft",
+      sendBlocked: true,
+      sendBlockedReason: cleanReservationText(campaign?.sendBlockedReason, 160),
+    },
+    preferencesSnapshot: {
+      adminTestOnly: true,
+      campaignDraftTest: true,
+    },
+  };
+}
+
 function enqueueReservationNotification(tx, {
   db,
   templateKey,
@@ -403,6 +455,7 @@ module.exports = {
   NOTIFICATION_OUTBOX_COLLECTION,
   REVIEW_PROMPT_RESERVATION_STATUS_VALUES,
   adminNotificationOutboxDocId,
+  buildAdminCampaignDraftTestNotificationOutboxDocument,
   buildAdminPendingBookingNotificationOutboxDocument,
   buildAdminTestNotificationOutboxDocument,
   buildReservationNotificationOutboxDocument,

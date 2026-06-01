@@ -96,6 +96,7 @@ const DEFAULT_NOTIFICATION_SETTINGS = {
   templates: DEFAULT_NOTIFICATION_TEMPLATES,
 };
 
+const TEST_CAMPAIGN_ID_PATTERN = /^[A-Za-z0-9_-]{3,80}$/;
 const MIN_REMINDER_LEAD_MINUTES = 15;
 const MAX_REMINDER_LEAD_MINUTES = 7 * 24 * 60;
 const MAX_TEMPLATE_TITLE_LENGTH = 120;
@@ -303,6 +304,19 @@ function validateAdminNotificationTestInput(data = {}) {
   }
 
   const templateKey = String(data.templateKey || "").trim();
+  const campaignId = String(data.campaignId || "").trim();
+  if (campaignId) {
+    if (templateKey) {
+      throw new HttpsError("invalid-argument", "Choose either templateKey or campaignId");
+    }
+    if (!TEST_CAMPAIGN_ID_PATTERN.test(campaignId) || campaignId.includes("/")) {
+      throw new HttpsError("invalid-argument", "campaignId is invalid");
+    }
+    return {
+      campaignId,
+    };
+  }
+
   if (!TEMPLATE_KEYS.includes(templateKey)) {
     throw new HttpsError("invalid-argument", "templateKey is invalid");
   }

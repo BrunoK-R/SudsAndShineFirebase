@@ -173,6 +173,10 @@ test("validateAdminNotificationTestInput accepts only known template keys", () =
     validateAdminNotificationTestInput({templateKey: " booking_request "}),
     {templateKey: "booking_request"},
   );
+  assert.deepEqual(
+    validateAdminNotificationTestInput({campaignId: " summer-test "}),
+    {campaignId: "summer-test"},
+  );
 
   assert.throws(
     () => validateAdminNotificationTestInput({templateKey: "../booking_request"}),
@@ -182,6 +186,16 @@ test("validateAdminNotificationTestInput accepts only known template keys", () =
   assert.throws(
     () => validateAdminNotificationTestInput({templateKey: "marketing_campaign"}),
     /templateKey/,
+  );
+
+  assert.throws(
+    () => validateAdminNotificationTestInput({campaignId: "campaigns/summer"}),
+    /campaignId/,
+  );
+
+  assert.throws(
+    () => validateAdminNotificationTestInput({templateKey: "booking_request", campaignId: "summer-test"}),
+    /either templateKey or campaignId/,
   );
 });
 

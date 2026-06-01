@@ -107,6 +107,7 @@ const {
   NOTIFICATION_CAMPAIGN_DRAFTS_COLLECTION,
   buildAdminNotificationCampaignDrafts,
   buildNotificationCampaignDraftValue,
+  normalizeNotificationCampaignDraft,
   validateNotificationCampaignDraftArchiveInput,
   validateNotificationCampaignDraftInput,
 } = require("./notificationCampaigns");
@@ -124,6 +125,7 @@ const {
   REVIEW_PROMPT_RESERVATION_STATUS_VALUES,
   enqueueAdminPendingBookingNotification,
   enqueueReservationNotification,
+  buildAdminCampaignDraftTestNotificationOutboxDocument,
   buildAdminTestNotificationOutboxDocument,
   isBookingReminderReservationDue,
   isReviewPromptReservationDue,
@@ -1624,7 +1626,7 @@ exports.updateNotificationSettings = onCall(async (request) => {
 
 exports.sendAdminNotificationTest = onCall(async (request) => {
   await assertAdminRequest(request);
-  const {templateKey} = validateAdminNotificationTestInput(request.data);
+  const {templateKey, campaignId} = validateAdminNotificationTestInput(request.data);
   const recipientUid = request.auth.uid;
 
   const hasActiveToken = await hasActiveNotificationTokenForUser(recipientUid);
@@ -1635,15 +1637,33 @@ exports.sendAdminNotificationTest = onCall(async (request) => {
     );
   }
 
-  const settingsSnap = await notificationSettingsRef().get();
-  const settings = buildNotificationSettings(settingsSnap);
-  const notification = buildAdminTestNotificationOutboxDocument({
-    templateKey,
-    settings,
-    recipientUid,
-    actorUid: recipientUid,
-    timestamp: new Date(),
-  });
+  let notification = null;
+  if (campaignId) {
+    const campaignSnap = await notificationCampaignDraftsCollection().doc(campaignId).get();
+    const campaign = campaignSnap.exists ? normalizeNotificationCampaignDraft(campaignSnap) : null;
+    if (!campaign) {
+      throw new HttpsError("not-found", "Notification campaign draft not found");
+    }
+    if (campaign.status !== "draft") {
+      throw new HttpsError("failed-precondition", "Only draft notification campaigns can be tested");
+    }
+    notification = buildAdminCampaignDraftTestNotificationOutboxDocument({
+      campaign,
+      recipientUid,
+      actorUid: recipientUid,
+      timestamp: new Date(),
+    });
+  } else {
+    const settingsSnap = await notificationSettingsRef().get();
+    const settings = buildNotificationSettings(settingsSnap);
+    notification = buildAdminTestNotificationOutboxDocument({
+      templateKey,
+      settings,
+      recipientUid,
+      actorUid: recipientUid,
+      timestamp: new Date(),
+    });
+  }
   if (!notification) {
     throw new HttpsError("failed-precondition", "Notification template is disabled");
   }
@@ -1655,6 +1675,7 @@ exports.sendAdminNotificationTest = onCall(async (request) => {
     queued: true,
     notificationId: notificationRef.id,
     templateKey: notification.templateKey,
+    campaignId: notification.campaignId || "",
     deliveryState: notification.deliveryState,
     recipientUid,
     message: "Test notification queued for the current admin user",
