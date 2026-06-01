@@ -298,6 +298,11 @@ test("notification quiet hours support overnight and same-day windows", () => {
     quietHoursStart: "bad",
     quietHoursEnd: "08:00",
   }, new Date("2026-01-01T07:30:00.000Z")), false);
+  assert.equal(isNotificationQuietHour({
+    quietHoursStart: "09:00",
+    quietHoursEnd: "10:00",
+    quietHoursTimeZone: "Asia/Tokyo",
+  }, new Date("2026-01-01T00:30:00.000Z")), true);
 });
 
 test("quiet hours defer normal push delivery but allow admin self-tests", () => {
@@ -325,12 +330,12 @@ test("quiet hours deferral records next delivery window without consuming attemp
   const settings = {
     quietHoursStart: "22:00",
     quietHoursEnd: "08:00",
+    quietHoursTimeZone: "UTC",
   };
   const deferral = notificationQuietHoursDeferral(
     outbox(),
     settings,
     new Date("2026-01-01T23:30:00.000Z"),
-    "UTC",
   );
 
   assert.equal(deferral.deliveryState, "deferred");
@@ -341,7 +346,7 @@ test("quiet hours deferral records next delivery window without consuming attemp
   assert.equal(deferral.quietHoursEnd, "08:00");
   assert.equal(deferral.quietHoursTimeZone, "UTC");
   assert.equal(
-    notificationQuietHoursDeferral(outbox(), settings, new Date("2026-01-01T12:00:00.000Z"), "UTC"),
+    notificationQuietHoursDeferral(outbox(), settings, new Date("2026-01-01T12:00:00.000Z")),
     null,
   );
 });

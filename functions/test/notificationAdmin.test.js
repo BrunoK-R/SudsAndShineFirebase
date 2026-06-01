@@ -19,6 +19,7 @@ test("buildNotificationSettings returns safe defaults when no settings exist", (
   assert.equal(settings.reminderLeadMinutes, 120);
   assert.equal(settings.quietHoursStart, "22:00");
   assert.equal(settings.quietHoursEnd, "08:00");
+  assert.equal(settings.quietHoursTimeZone, "Europe/Lisbon");
   assert.deepEqual(settings.templates.map((template) => template.key), TEMPLATE_KEYS);
   assert.equal(settings.templates.find((template) => template.key === "booking_cancelled").title, "Marcação cancelada");
   assert.equal(settings.templates.find((template) => template.key === "booking_rescheduled").enabled, true);
@@ -40,6 +41,7 @@ test("buildNotificationSettings maps nested configured settings", () => {
       reminderLeadMinutes: "180",
       quietHoursStart: "21:30",
       quietHoursEnd: "07:15",
+      quietHoursTimeZone: "Atlantic/Azores",
       templates: [
         {
           key: "booking_accepted",
@@ -57,6 +59,7 @@ test("buildNotificationSettings maps nested configured settings", () => {
   assert.equal(settings.reminderLeadMinutes, 180);
   assert.equal(settings.quietHoursStart, "21:30");
   assert.equal(settings.quietHoursEnd, "07:15");
+  assert.equal(settings.quietHoursTimeZone, "Atlantic/Azores");
   assert.equal(settings.templates.find((template) => template.key === "booking_accepted").enabled, false);
   assert.equal(settings.templates.find((template) => template.key === "booking_accepted").title, "Confirmada");
   assert.equal(settings.templates.find((template) => template.key === "booking_accepted").body, "Até breve");
@@ -74,6 +77,7 @@ test("validateNotificationSettingsUpdateInput sanitizes admin settings", () => {
     reminderLeadMinutes: "240",
     quietHoursStart: "22:15",
     quietHoursEnd: "08:30",
+    quietHoursTimeZone: "Europe/Madrid",
     templates: TEMPLATE_KEYS.map((key) => ({
       key,
       enabled: key !== "booking_expired",
@@ -85,9 +89,11 @@ test("validateNotificationSettingsUpdateInput sanitizes admin settings", () => {
   assert.equal(settings.reminderLeadMinutes, 240);
   assert.equal(settings.quietHoursStart, "22:15");
   assert.equal(settings.quietHoursEnd, "08:30");
+  assert.equal(settings.quietHoursTimeZone, "Europe/Madrid");
   assert.equal(settings.templates.find((template) => template.key === "booking_expired").enabled, false);
   assert.equal(settings.templates[0].title, "booking_request title");
   assert.equal(settings.templates[0].body, "booking_request body");
+  assert.equal(buildNotificationSettingsValue(settings).quietHoursTimeZone, "Europe/Madrid");
   assert.deepEqual(buildNotificationSettingsValue(settings).templates[0], {
     key: "booking_request",
     label: "Pedido recebido",
@@ -138,6 +144,14 @@ test("validateNotificationSettingsUpdateInput rejects unsafe settings", () => {
   assert.throws(
     () => validateNotificationSettingsUpdateInput({
       ...validPayload(),
+      quietHoursTimeZone: "../Europe/Lisbon",
+    }),
+    /quietHoursTimeZone/,
+  );
+
+  assert.throws(
+    () => validateNotificationSettingsUpdateInput({
+      ...validPayload(),
       templates: validPayload().templates.filter((template) => template.key !== "review_prompt"),
     }),
     /All notification templates/,
@@ -181,6 +195,7 @@ function validPayload() {
     reminderLeadMinutes: 120,
     quietHoursStart: "22:00",
     quietHoursEnd: "08:00",
+    quietHoursTimeZone: "Europe/Lisbon",
     templates: TEMPLATE_KEYS.map((key) => ({
       key,
       enabled: true,

@@ -92,6 +92,7 @@ const DEFAULT_NOTIFICATION_SETTINGS = {
   reminderLeadMinutes: 120,
   quietHoursStart: "22:00",
   quietHoursEnd: "08:00",
+  quietHoursTimeZone: "Europe/Lisbon",
   templates: DEFAULT_NOTIFICATION_TEMPLATES,
 };
 
@@ -100,6 +101,7 @@ const MAX_REMINDER_LEAD_MINUTES = 7 * 24 * 60;
 const MAX_TEMPLATE_TITLE_LENGTH = 120;
 const MAX_TEMPLATE_BODY_LENGTH = 500;
 const TimeRegex = /^([01]\d|2[0-3]):([0-5]\d)$/;
+const TimeZoneRegex = /^[A-Za-z_]+(?:\/[A-Za-z0-9_+-]+)*$/;
 
 function settingPayload(data) {
   if (!data || typeof data !== "object") return {};
@@ -171,6 +173,32 @@ function requiredQuietHour(value, fieldName) {
   return value.trim();
 }
 
+function isSupportedTimeZone(value) {
+  if (typeof value !== "string") return false;
+  const trimmed = value.trim();
+  if (!trimmed || trimmed.length > 80 || !TimeZoneRegex.test(trimmed)) return false;
+  try {
+    new Intl.DateTimeFormat("en-GB", {timeZone: trimmed}).format(new Date("2026-01-01T00:00:00.000Z"));
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+function cleanQuietHoursTimeZone(value, fallback) {
+  return isSupportedTimeZone(value) ? value.trim() : fallback;
+}
+
+function optionalQuietHoursTimeZone(value) {
+  if (value === undefined || value === null || value === "") {
+    return DEFAULT_NOTIFICATION_SETTINGS.quietHoursTimeZone;
+  }
+  if (!isSupportedTimeZone(value)) {
+    throw new HttpsError("invalid-argument", "quietHoursTimeZone must be a supported IANA time zone");
+  }
+  return value.trim();
+}
+
 function templateFallback(key) {
   return DEFAULT_NOTIFICATION_TEMPLATES.find((template) => template.key === key);
 }
@@ -229,6 +257,10 @@ function buildNotificationSettings(docSnap = null) {
     reminderLeadMinutes: cleanReminderLeadMinutes(source.reminderLeadMinutes),
     quietHoursStart: cleanQuietHour(source.quietHoursStart, DEFAULT_NOTIFICATION_SETTINGS.quietHoursStart),
     quietHoursEnd: cleanQuietHour(source.quietHoursEnd, DEFAULT_NOTIFICATION_SETTINGS.quietHoursEnd),
+    quietHoursTimeZone: cleanQuietHoursTimeZone(
+      source.quietHoursTimeZone,
+      DEFAULT_NOTIFICATION_SETTINGS.quietHoursTimeZone,
+    ),
     templates: TEMPLATE_KEYS.map((key) => buildTemplate(rawTemplates.get(key), key)),
     source: docSnap?.exists ? "firestore" : "default",
   };
@@ -256,6 +288,7 @@ function validateNotificationSettingsUpdateInput(data = {}) {
     reminderLeadMinutes: requiredReminderLeadMinutes(data.reminderLeadMinutes),
     quietHoursStart: requiredQuietHour(data.quietHoursStart, "quietHoursStart"),
     quietHoursEnd: requiredQuietHour(data.quietHoursEnd, "quietHoursEnd"),
+    quietHoursTimeZone: optionalQuietHoursTimeZone(data.quietHoursTimeZone),
     templates: TEMPLATE_KEYS.map((key) =>
       rawTemplates.has(key) ?
         validateTemplate(rawTemplates.get(key), key) :
@@ -289,6 +322,7 @@ function buildNotificationSettingsValue(settings) {
     reminderLeadMinutes: settings.reminderLeadMinutes,
     quietHoursStart: settings.quietHoursStart,
     quietHoursEnd: settings.quietHoursEnd,
+    quietHoursTimeZone: settings.quietHoursTimeZone,
     templates: settings.templates.map((template) => ({
       key: template.key,
       label: template.label,

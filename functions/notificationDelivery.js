@@ -87,16 +87,28 @@ function localMinutesForDate(now = new Date(), timeZone = NOTIFICATION_QUIET_HOU
   }
 }
 
+function notificationQuietHoursTimeZone(settings = {}, timeZone = null) {
+  const value = cleanDeliveryText(timeZone || settings?.quietHoursTimeZone, 80);
+  if (!value) return NOTIFICATION_QUIET_HOURS_TIME_ZONE;
+  try {
+    new Intl.DateTimeFormat("en-GB", {timeZone: value}).format(new Date("2026-01-01T00:00:00.000Z"));
+    return value;
+  } catch {
+    return NOTIFICATION_QUIET_HOURS_TIME_ZONE;
+  }
+}
+
 function isNotificationQuietHour(
   settings = {},
   now = new Date(),
-  timeZone = NOTIFICATION_QUIET_HOURS_TIME_ZONE,
+  timeZone = null,
 ) {
+  const resolvedTimeZone = notificationQuietHoursTimeZone(settings, timeZone);
   const start = quietHourMinutes(settings?.quietHoursStart);
   const end = quietHourMinutes(settings?.quietHoursEnd);
   if (start === null || end === null || start === end) return false;
 
-  const current = localMinutesForDate(now, timeZone);
+  const current = localMinutesForDate(now, resolvedTimeZone);
   if (current === null) return false;
 
   if (start < end) {
@@ -118,14 +130,15 @@ function shouldBypassNotificationPreferenceSuppression(outbox = {}) {
 function minutesUntilQuietHourEnd(
   settings = {},
   now = new Date(),
-  timeZone = NOTIFICATION_QUIET_HOURS_TIME_ZONE,
+  timeZone = null,
 ) {
+  const resolvedTimeZone = notificationQuietHoursTimeZone(settings, timeZone);
   const start = quietHourMinutes(settings?.quietHoursStart);
   const end = quietHourMinutes(settings?.quietHoursEnd);
   if (start === null || end === null || start === end) return 0;
 
-  const current = localMinutesForDate(now, timeZone);
-  if (current === null || !isNotificationQuietHour(settings, now, timeZone)) return 0;
+  const current = localMinutesForDate(now, resolvedTimeZone);
+  if (current === null || !isNotificationQuietHour(settings, now, resolvedTimeZone)) return 0;
   if (start < end) return end - current;
   if (current >= start) return (MINUTES_PER_DAY - current) + end;
   return end - current;
@@ -135,17 +148,18 @@ function notificationQuietHoursDeferral(
   outbox = {},
   settings = {},
   now = new Date(),
-  timeZone = NOTIFICATION_QUIET_HOURS_TIME_ZONE,
+  timeZone = null,
 ) {
+  const resolvedTimeZone = notificationQuietHoursTimeZone(settings, timeZone);
   if (
     !isNotificationOutboxDeliverable(outbox) ||
     shouldBypassNotificationQuietHours(outbox) ||
-    !isNotificationQuietHour(settings, now, timeZone)
+    !isNotificationQuietHour(settings, now, resolvedTimeZone)
   ) {
     return null;
   }
 
-  const minutesUntilEnd = minutesUntilQuietHourEnd(settings, now, timeZone);
+  const minutesUntilEnd = minutesUntilQuietHourEnd(settings, now, resolvedTimeZone);
   if (minutesUntilEnd <= 0) return null;
 
   return {
@@ -155,7 +169,7 @@ function notificationQuietHoursDeferral(
     quietHoursDeferredUntil: new Date(now.getTime() + minutesUntilEnd * 60 * 1000),
     quietHoursStart: cleanDeliveryText(settings.quietHoursStart, 16),
     quietHoursEnd: cleanDeliveryText(settings.quietHoursEnd, 16),
-    quietHoursTimeZone: cleanDeliveryText(timeZone, 80) || NOTIFICATION_QUIET_HOURS_TIME_ZONE,
+    quietHoursTimeZone: resolvedTimeZone,
   };
 }
 
@@ -163,7 +177,7 @@ function shouldDeferNotificationForQuietHours(
   outbox = {},
   settings = {},
   now = new Date(),
-  timeZone = NOTIFICATION_QUIET_HOURS_TIME_ZONE,
+  timeZone = null,
 ) {
   return notificationQuietHoursDeferral(outbox, settings, now, timeZone) !== null;
 }
