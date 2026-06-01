@@ -187,6 +187,10 @@ service cloud.firestore {
       allow read, write: if false;
     }
 
+    match /notification_campaign_drafts/{docId} {
+      allow read, write: if false;
+    }
+
     match /users/{userId} {
       allow read, write: if false;
 

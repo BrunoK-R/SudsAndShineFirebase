@@ -99,6 +99,13 @@ const {
   validateNotificationSettingsUpdateInput,
 } = require("./notificationAdmin");
 const {
+  NOTIFICATION_CAMPAIGN_DRAFTS_COLLECTION,
+  buildAdminNotificationCampaignDrafts,
+  buildNotificationCampaignDraftValue,
+  validateNotificationCampaignDraftArchiveInput,
+  validateNotificationCampaignDraftInput,
+} = require("./notificationCampaigns");
+const {
   buildNotificationTokenValue,
   buildUserNotificationPreferences,
   buildUserNotificationPreferencesValue,
@@ -207,6 +214,10 @@ function legacyLoyaltySettingsRef() {
 
 function notificationSettingsRef() {
   return db.collection("admin_settings").doc("notification_settings");
+}
+
+function notificationCampaignDraftsCollection() {
+  return db.collection(NOTIFICATION_CAMPAIGN_DRAFTS_COLLECTION);
 }
 
 function userNotificationPreferencesRef(uid) {
@@ -1508,6 +1519,13 @@ exports.getAdminNotificationSettings = onCall(async (request) => {
   return buildNotificationSettings(settingsSnap);
 });
 
+exports.getAdminNotificationCampaignDrafts = onCall(async (request) => {
+  await assertAdminRequest(request);
+
+  const campaignsSnap = await notificationCampaignDraftsCollection().limit(100).get();
+  return buildAdminNotificationCampaignDrafts(campaignsSnap.docs);
+});
+
 exports.updateBusinessInfo = onCall(async (request) => {
   await assertAdminRequest(request);
   const businessInfo = validateBusinessInfoUpdateInput(request.data);
@@ -1632,6 +1650,84 @@ exports.sendAdminNotificationTest = onCall(async (request) => {
     deliveryState: notification.deliveryState,
     recipientUid,
     message: "Test notification queued for the current admin user",
+  };
+});
+
+exports.upsertAdminNotificationCampaignDraft = onCall(async (request) => {
+  await assertAdminRequest(request);
+  const fallbackRef = notificationCampaignDraftsCollection().doc();
+  const draft = validateNotificationCampaignDraftInput(request.data, fallbackRef.id);
+  const campaignRef = notificationCampaignDraftsCollection().doc(draft.campaignId);
+  const value = buildNotificationCampaignDraftValue(draft);
+  let created = false;
+
+  await db.runTransaction(async (tx) => {
+    const campaignSnap = await tx.get(campaignRef);
+    created = !campaignSnap.exists;
+    const currentStatus = String(campaignSnap.get("status") || "draft").trim();
+    if (!created && currentStatus !== "draft") {
+      throw new HttpsError("failed-precondition", "Only draft notification campaigns can be edited");
+    }
+    const update = {
+      ...value,
+      updatedAt: admin.firestore.FieldValue.serverTimestamp(),
+      updatedByUid: request.auth.uid,
+      archivedAt: admin.firestore.FieldValue.delete(),
+      archivedByUid: admin.firestore.FieldValue.delete(),
+    };
+
+    if (created) {
+      update.createdAt = admin.firestore.FieldValue.serverTimestamp();
+      update.createdByUid = request.auth.uid;
+      update.notificationCreatedByUid = request.auth.uid;
+    }
+
+    tx.set(campaignRef, update, {merge: true});
+  });
+
+  return {
+    ok: true,
+    created,
+    campaignId: draft.campaignId,
+    status: draft.status,
+    targetAudience: draft.targetAudience,
+    sendBlocked: true,
+    sendBlockedReason: draft.sendBlockedReason,
+  };
+});
+
+exports.archiveAdminNotificationCampaignDraft = onCall(async (request) => {
+  await assertAdminRequest(request);
+  const data = validateNotificationCampaignDraftArchiveInput(request.data);
+  const campaignRef = notificationCampaignDraftsCollection().doc(data.campaignId);
+
+  await db.runTransaction(async (tx) => {
+    const campaignSnap = await tx.get(campaignRef);
+    if (!campaignSnap.exists) {
+      throw new HttpsError("not-found", "Notification campaign draft not found");
+    }
+    const currentStatus = String(campaignSnap.get("status") || "draft").trim();
+    if (currentStatus === "archived") return;
+    if (currentStatus !== "draft") {
+      throw new HttpsError("failed-precondition", "Only draft notification campaigns can be archived");
+    }
+
+    tx.update(campaignRef, {
+      status: "archived",
+      archivedAt: admin.firestore.FieldValue.serverTimestamp(),
+      archivedByUid: request.auth.uid,
+      updatedAt: admin.firestore.FieldValue.serverTimestamp(),
+      updatedByUid: request.auth.uid,
+      updateSource: "admin-mobile-notification-campaigns",
+      sendBlocked: true,
+      sendBlockedReason: "campaign-send-not-implemented",
+    });
+  });
+
+  return {
+    ok: true,
+    campaignId: data.campaignId,
+    status: "archived",
   };
 });
 

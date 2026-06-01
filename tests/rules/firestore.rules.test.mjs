@@ -273,6 +273,41 @@ test('notification outbox is hidden from all direct clients', async () => {
   }));
 });
 
+test('notification campaign drafts are callable-only for direct clients', async () => {
+  const now = Timestamp.fromDate(new Date());
+  await seedDoc('notification_campaign_drafts', 'spring-draft', {
+    campaignId: 'spring-draft',
+    title: 'Campanha de primavera',
+    body: 'Mensagem para clientes opt-in.',
+    targetAudience: 'marketing_opt_in_users',
+    channels: ['push'],
+    marketingConsentRequired: true,
+    status: 'draft',
+    sendBlocked: true,
+    sendBlockedReason: 'campaign-send-not-implemented',
+    createdAt: now,
+    updatedAt: now,
+  });
+
+  await assertFails(getDoc(doc(unauthDb(), 'notification_campaign_drafts', 'spring-draft')));
+  await assertFails(getDoc(doc(userDb('user-1'), 'notification_campaign_drafts', 'spring-draft')));
+  await assertFails(getDoc(doc(staffDb(), 'notification_campaign_drafts', 'spring-draft')));
+  await assertFails(getDoc(doc(adminDb(), 'notification_campaign_drafts', 'spring-draft')));
+  await assertFails(setDoc(doc(adminDb(), 'notification_campaign_drafts', 'manual'), {
+    campaignId: 'manual',
+    title: 'Manual write',
+    body: 'Direct clients must use callables.',
+    targetAudience: 'marketing_opt_in_users',
+    channels: ['push'],
+    marketingConsentRequired: true,
+    status: 'draft',
+    sendBlocked: true,
+    sendBlockedReason: 'campaign-send-not-implemented',
+    createdAt: now,
+    updatedAt: now,
+  }));
+});
+
 test('public reservation create is allowed only with valid payload shape', async () => {
   const db = unauthDb();
   const goodPayload = validReservationPayload();
