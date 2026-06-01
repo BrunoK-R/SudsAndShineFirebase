@@ -1606,6 +1606,7 @@ exports.updateNotificationSettings = onCall(async (request) => {
   await assertAdminRequest(request);
   const settings = validateNotificationSettingsUpdateInput(request.data);
   const value = buildNotificationSettingsValue(settings);
+  const updatedAt = new Date();
 
   await notificationSettingsRef().set(
     {
@@ -1621,6 +1622,8 @@ exports.updateNotificationSettings = onCall(async (request) => {
   return {
     ...settings,
     source: "firestore",
+    updatedAtIso: updatedAt.toISOString(),
+    updatedByUid: request.auth.uid,
   };
 });
 

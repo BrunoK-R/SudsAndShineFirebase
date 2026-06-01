@@ -32,6 +32,8 @@ test("buildNotificationSettings returns safe defaults when no settings exist", (
 
 test("buildNotificationSettings maps nested configured settings", () => {
   const settings = buildNotificationSettings(doc({
+    updatedAt: new Date("2026-06-01T10:15:00.000Z"),
+    updatedByUid: " admin-updated ",
     value: {
       bookingStatusEnabled: false,
       appointmentReminderEnabled: true,
@@ -65,6 +67,26 @@ test("buildNotificationSettings maps nested configured settings", () => {
   assert.equal(settings.templates.find((template) => template.key === "booking_accepted").body, "Até breve");
   assert.equal(settings.templates.find((template) => template.key === "booking_request").enabled, true);
   assert.equal(settings.source, "firestore");
+  assert.equal(settings.updatedAtIso, "2026-06-01T10:15:00.000Z");
+  assert.equal(settings.updatedByUid, "admin-updated");
+});
+
+test("buildNotificationSettings normalizes timestamp-like audit metadata", () => {
+  const fromTimestamp = buildNotificationSettings(doc({
+    updatedAt: {seconds: 1780309800, nanoseconds: 500000000},
+    updatedByUid: "admin-ts",
+    value: validPayload(),
+  }));
+  const fromString = buildNotificationSettings(doc({
+    updatedAt: "2026-06-01T12:45:00.000Z",
+    updatedByUid: "admin-string",
+    value: validPayload(),
+  }));
+
+  assert.equal(fromTimestamp.updatedAtIso, "2026-06-01T10:30:00.500Z");
+  assert.equal(fromTimestamp.updatedByUid, "admin-ts");
+  assert.equal(fromString.updatedAtIso, "2026-06-01T12:45:00.000Z");
+  assert.equal(fromString.updatedByUid, "admin-string");
 });
 
 test("validateNotificationSettingsUpdateInput sanitizes admin settings", () => {
