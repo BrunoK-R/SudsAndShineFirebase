@@ -14,6 +14,7 @@ test("buildUserNotificationPreferences returns safe defaults", () => {
     bookingStatusEnabled: true,
     appointmentReminderEnabled: true,
     loyaltyEnabled: true,
+    adminPendingAlertEnabled: true,
     marketingEnabled: false,
   });
 });
@@ -31,6 +32,7 @@ test("buildUserNotificationPreferences falls back to existing profile opt-ins", 
     bookingStatusEnabled: true,
     appointmentReminderEnabled: false,
     loyaltyEnabled: true,
+    adminPendingAlertEnabled: true,
     marketingEnabled: true,
   });
 });
@@ -41,6 +43,7 @@ test("buildUserNotificationPreferences prefers dedicated preferences", () => {
       bookingStatusEnabled: false,
       appointmentReminderEnabled: true,
       loyaltyEnabled: false,
+      adminPendingAlertEnabled: false,
       marketingEnabled: false,
     }),
     userDoc: doc({
@@ -53,6 +56,7 @@ test("buildUserNotificationPreferences prefers dedicated preferences", () => {
     bookingStatusEnabled: false,
     appointmentReminderEnabled: true,
     loyaltyEnabled: false,
+    adminPendingAlertEnabled: false,
     marketingEnabled: false,
   });
 });
@@ -62,6 +66,7 @@ test("validateUserNotificationPreferencesInput normalizes booleans", () => {
     bookingStatusEnabled: true,
     appointmentReminderEnabled: false,
     loyaltyEnabled: true,
+    adminPendingAlertEnabled: false,
     marketingEnabled: true,
   });
 
@@ -69,6 +74,7 @@ test("validateUserNotificationPreferencesInput normalizes booleans", () => {
     bookingStatusEnabled: true,
     appointmentReminderEnabled: false,
     loyaltyEnabled: true,
+    adminPendingAlertEnabled: false,
     marketingEnabled: true,
   });
 });

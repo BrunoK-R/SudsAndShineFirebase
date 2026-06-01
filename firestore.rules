@@ -103,6 +103,7 @@ service cloud.firestore {
           'bookingStatusEnabled',
           'appointmentReminderEnabled',
           'loyaltyEnabled',
+          'adminPendingAlertEnabled',
           'marketingEnabled',
           'updatedAt',
           'updatedByUid',
@@ -112,6 +113,7 @@ service cloud.firestore {
         optionalBoolField('bookingStatusEnabled') &&
         optionalBoolField('appointmentReminderEnabled') &&
         optionalBoolField('loyaltyEnabled') &&
+        optionalBoolField('adminPendingAlertEnabled') &&
         optionalBoolField('marketingEnabled') &&
         optionalTimestampField('updatedAt') &&
         optionalStringField('updatedByUid', 128) &&

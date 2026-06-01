@@ -225,6 +225,12 @@ function notificationDeliveryPreferenceSuppression(outbox = {}, settings = {}, p
         deliverySuppressionReason: "admin-pending-alerts-disabled",
       };
     }
+    if (preferences.adminPendingAlertEnabled === false) {
+      return {
+        deliveryState: "suppressed",
+        deliverySuppressionReason: "admin-pending-alerts-user-disabled",
+      };
+    }
     return null;
   }
 

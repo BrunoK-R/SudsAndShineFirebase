@@ -228,6 +228,14 @@ test("notification delivery suppression re-checks current settings and preferenc
   );
   assert.equal(
     notificationDeliveryPreferenceSuppression(
+      outbox({templateKey: "admin_pending_booking"}),
+      enabledSettings,
+      notificationPreferences({adminPendingAlertEnabled: false}),
+    ).deliverySuppressionReason,
+    "admin-pending-alerts-user-disabled",
+  );
+  assert.equal(
+    notificationDeliveryPreferenceSuppression(
       outbox({type: "admin_test_notification", templateKey: "booking_accepted"}),
       notificationSettings({bookingStatusEnabled: false}),
       notificationPreferences({bookingStatusEnabled: false}),
@@ -391,6 +399,7 @@ function notificationPreferences(overrides = {}) {
     bookingStatusEnabled: true,
     appointmentReminderEnabled: true,
     loyaltyEnabled: true,
+    adminPendingAlertEnabled: true,
     marketingEnabled: false,
     ...overrides,
   };

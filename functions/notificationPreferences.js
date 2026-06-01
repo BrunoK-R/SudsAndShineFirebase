@@ -5,6 +5,7 @@ const DEFAULT_USER_NOTIFICATION_PREFERENCES = {
   bookingStatusEnabled: true,
   appointmentReminderEnabled: true,
   loyaltyEnabled: true,
+  adminPendingAlertEnabled: true,
   marketingEnabled: false,
 };
 
@@ -47,6 +48,10 @@ function buildUserNotificationPreferences({preferencesDoc = null, userDoc = null
       boolValue(fallback.appointmentReminderEnabled, DEFAULT_USER_NOTIFICATION_PREFERENCES.appointmentReminderEnabled),
     ),
     loyaltyEnabled: boolValue(source.loyaltyEnabled, DEFAULT_USER_NOTIFICATION_PREFERENCES.loyaltyEnabled),
+    adminPendingAlertEnabled: boolValue(
+      source.adminPendingAlertEnabled,
+      DEFAULT_USER_NOTIFICATION_PREFERENCES.adminPendingAlertEnabled,
+    ),
     marketingEnabled: boolValue(
       source.marketingEnabled,
       boolValue(fallback.marketingEnabled, DEFAULT_USER_NOTIFICATION_PREFERENCES.marketingEnabled),
@@ -63,6 +68,7 @@ function validateUserNotificationPreferencesInput(data = {}) {
     bookingStatusEnabled: data.bookingStatusEnabled === true,
     appointmentReminderEnabled: data.appointmentReminderEnabled === true,
     loyaltyEnabled: data.loyaltyEnabled === true,
+    adminPendingAlertEnabled: data.adminPendingAlertEnabled !== false,
     marketingEnabled: data.marketingEnabled === true,
   };
 }
@@ -72,6 +78,7 @@ function buildUserNotificationPreferencesValue(preferences) {
     bookingStatusEnabled: preferences.bookingStatusEnabled,
     appointmentReminderEnabled: preferences.appointmentReminderEnabled,
     loyaltyEnabled: preferences.loyaltyEnabled,
+    adminPendingAlertEnabled: preferences.adminPendingAlertEnabled,
     marketingEnabled: preferences.marketingEnabled,
   };
 }

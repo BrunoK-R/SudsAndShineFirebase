@@ -325,6 +325,7 @@ test("buildAdminPendingBookingNotificationOutboxDocument queues admin alerts wit
   assert.equal(payload.deliveryState, "queued");
   assert.equal(payload.createdByUid, "public-booking");
   assert.equal(payload.preferencesSnapshot.adminPendingAlertEnabled, true);
+  assert.equal(payload.preferencesSnapshot.recipientAdminPendingAlertEnabled, true);
   assert.equal(Object.hasOwn(payload, "token"), false);
 });
 
@@ -364,6 +365,13 @@ test("buildAdminPendingBookingNotificationOutboxDocument respects admin alert op
     reservationId: "reservation-1",
     reservation: reservation(),
     settings: buildNotificationSettings(null),
+    preferences: {adminPendingAlertEnabled: false},
+    recipientUid: "admin-1",
+  }), null);
+  assert.equal(buildAdminPendingBookingNotificationOutboxDocument({
+    reservationId: "reservation-1",
+    reservation: reservation(),
+    settings: buildNotificationSettings(null),
     recipientUid: "",
   }), null);
 });
@@ -395,6 +403,30 @@ test("enqueueAdminPendingBookingNotification writes deterministic per-admin outb
     )}`,
     data: queued,
   });
+});
+
+test("enqueueAdminPendingBookingNotification skips admin alert recipient opt-outs", () => {
+  const tx = fakeTx();
+  const db = fakeDb();
+  const suppressed = enqueueAdminPendingBookingNotification(tx, {
+    db,
+    reservationId: "reservation-1",
+    reservation: reservation(),
+    recipientUid: "admin-1",
+    notificationSettingsSnap: doc({
+      value: {
+        adminPendingAlertEnabled: true,
+      },
+    }),
+    adminPreferencesSnap: doc({
+      adminPendingAlertEnabled: false,
+    }),
+    actorUid: "public-booking",
+    timestamp: new Date("2026-05-31T16:25:00.000Z"),
+  });
+
+  assert.equal(suppressed, null);
+  assert.equal(tx.writes.length, 0);
 });
 
 test("buildAdminTestNotificationOutboxDocument queues current-admin test without token exposure", () => {

@@ -68,6 +68,9 @@ function isUserPreferenceEnabled(preferences, templateKey) {
   if (templateKey === "booking_reminder") {
     return preferences.appointmentReminderEnabled !== false;
   }
+  if (templateKey === ADMIN_PENDING_BOOKING_TEMPLATE_KEY) {
+    return preferences.adminPendingAlertEnabled !== false;
+  }
   return false;
 }
 
@@ -212,6 +215,7 @@ function buildAdminPendingBookingNotificationOutboxDocument({
   reservationId,
   reservation,
   settings,
+  preferences = {},
   recipientUid,
   actorUid = "",
   timestamp = null,
@@ -220,6 +224,7 @@ function buildAdminPendingBookingNotificationOutboxDocument({
   const normalizedReservationId = cleanReservationText(reservationId, 160);
   if (!normalizedRecipientUid || !normalizedReservationId) return null;
   if (!isTemplateGloballyEnabled(settings, ADMIN_PENDING_BOOKING_TEMPLATE_KEY)) return null;
+  if (!isUserPreferenceEnabled(preferences, ADMIN_PENDING_BOOKING_TEMPLATE_KEY)) return null;
 
   const template = templateForKey(settings, ADMIN_PENDING_BOOKING_TEMPLATE_KEY);
   if (!template || template.enabled === false) return null;
@@ -259,6 +264,7 @@ function buildAdminPendingBookingNotificationOutboxDocument({
     },
     preferencesSnapshot: {
       adminPendingAlertEnabled: settings.adminPendingAlertEnabled !== false,
+      recipientAdminPendingAlertEnabled: preferences.adminPendingAlertEnabled !== false,
     },
   };
 }
@@ -360,15 +366,20 @@ function enqueueAdminPendingBookingNotification(tx, {
   reservation,
   recipientUid,
   notificationSettingsSnap = null,
+  adminPreferencesSnap = null,
   existingOutboxSnap = null,
   actorUid = "",
   timestamp = null,
 } = {}) {
   const settings = buildNotificationSettings(notificationSettingsSnap);
+  const preferences = buildUserNotificationPreferences({
+    preferencesDoc: adminPreferencesSnap,
+  });
   const document = buildAdminPendingBookingNotificationOutboxDocument({
     reservationId,
     reservation,
     settings,
+    preferences,
     recipientUid,
     actorUid,
     timestamp,

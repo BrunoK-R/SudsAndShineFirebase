@@ -256,21 +256,25 @@ function enqueueAdminPendingBookingAlerts(tx, {
   reservation,
   notificationSettingsSnap,
   adminAllowlistSnap,
+  adminPreferenceSnaps = [],
   actorUid = "",
 } = {}) {
   const recipientUids = adminAlertRecipientUidsFromSnapshot(adminAllowlistSnap);
-  for (const recipientUid of recipientUids) {
-    enqueueAdminPendingBookingNotification(tx, {
+  let queuedCount = 0;
+  recipientUids.forEach((recipientUid, index) => {
+    const queued = enqueueAdminPendingBookingNotification(tx, {
       db,
       reservationId,
       reservation,
       recipientUid,
       notificationSettingsSnap,
+      adminPreferencesSnap: adminPreferenceSnaps[index] || null,
       actorUid,
       timestamp: admin.firestore.FieldValue.serverTimestamp(),
     });
-  }
-  return recipientUids.length;
+    if (queued) queuedCount += 1;
+  });
+  return queuedCount;
 }
 
 function selectedLoyaltySettingsSnapshot(primarySnap, legacySnap) {
@@ -488,6 +492,10 @@ exports.createReservation = onCall(async (request) => {
     const capacityOverride = capacityOverrideSnap.empty ? null : capacityOverrideSnap.docs[0].data();
     const defaultCapacitySetting = defaultCapacitySnap.empty ? null : defaultCapacitySnap.docs[0].data();
     const capacityLimit = resolveCapacityLimit(defaultCapacitySetting, capacityOverride);
+    const adminAlertRecipientUids = adminAlertRecipientUidsFromSnapshot(adminAllowlistSnap);
+    const adminPreferenceSnaps = await Promise.all(
+      adminAlertRecipientUids.map((uid) => tx.get(userNotificationPreferencesRef(uid))),
+    );
     const businessInfo = businessInfoFromSnapshots(businessInfoSnap, keyedBusinessInfoSnap);
     const bookingPolicy = buildBookingPolicy(bookingPolicySnap);
     pendingExpiresAt = admin.firestore.Timestamp.fromDate(pendingExpiresAtForPolicy(bookingPolicy));
@@ -614,6 +622,7 @@ exports.createReservation = onCall(async (request) => {
       reservation: reservationDocument,
       notificationSettingsSnap,
       adminAllowlistSnap,
+      adminPreferenceSnaps,
       actorUid: authenticatedUid || "public-booking",
     });
 
