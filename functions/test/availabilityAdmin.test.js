@@ -26,8 +26,21 @@ test("buildAdminAvailabilityConfig maps current capacity and operating hours", (
       },
     },
     capacityOverrideDocs: [
-      doc({date: "2026-06-11", maxBookingsPerSlot: 0}),
-      doc({date: "2026-06-10", max_bookings_per_slot: "4"}),
+      doc({
+        date: "2026-06-11",
+        maxBookingsPerSlot: 0,
+        updatedAt: {
+          seconds: 1781171400,
+          nanoseconds: 500000000,
+        },
+        updatedByUid: " admin-capacity ",
+      }),
+      doc({
+        date: "2026-06-10",
+        max_bookings_per_slot: "4",
+        updatedAt: new Date("2026-06-01T10:15:00.000Z"),
+        updatedByUid: "admin-capacity-2",
+      }),
       doc({date: "2026-06-12", maxBookingsPerSlot: 8, active: false}),
     ],
     blockedSlotDocs: [
@@ -37,6 +50,8 @@ test("buildAdminAvailabilityConfig maps current capacity and operating hours", (
         slotStart: "2026-06-10T16:00:00.000Z",
         slotEnd: "2026-06-10T17:00:00.000Z",
         reason: "Formação",
+        updatedAt: "2026-06-01T11:45:00.000Z",
+        updatedByUid: " admin-blocked ",
       }, "slot-late"),
       doc({
         blockedSlotId: "slot-early",
@@ -59,8 +74,18 @@ test("buildAdminAvailabilityConfig maps current capacity and operating hours", (
   assert.equal(config.openingHours.length, 2);
   assert.equal(config.openingHours[0].dayLabel, "Segunda a Sexta");
   assert.deepEqual(config.capacityOverrides, [
-    {date: "2026-06-10", maxBookingsPerSlot: 4},
-    {date: "2026-06-11", maxBookingsPerSlot: 0},
+    {
+      date: "2026-06-10",
+      maxBookingsPerSlot: 4,
+      updatedAtIso: "2026-06-01T10:15:00.000Z",
+      updatedByUid: "admin-capacity-2",
+    },
+    {
+      date: "2026-06-11",
+      maxBookingsPerSlot: 0,
+      updatedAtIso: "2026-06-11T09:50:00.500Z",
+      updatedByUid: "admin-capacity",
+    },
   ]);
   assert.deepEqual(config.blockedSlots, [
     {
@@ -69,6 +94,8 @@ test("buildAdminAvailabilityConfig maps current capacity and operating hours", (
       slotStart: "2026-06-10T09:00:00.000Z",
       slotEnd: "2026-06-10T10:00:00.000Z",
       reason: "Manutenção",
+      updatedAtIso: "",
+      updatedByUid: "",
     },
     {
       blockedSlotId: "slot-late",
@@ -76,6 +103,8 @@ test("buildAdminAvailabilityConfig maps current capacity and operating hours", (
       slotStart: "2026-06-10T16:00:00.000Z",
       slotEnd: "2026-06-10T17:00:00.000Z",
       reason: "Formação",
+      updatedAtIso: "2026-06-01T11:45:00.000Z",
+      updatedByUid: "admin-blocked",
     },
   ]);
 });

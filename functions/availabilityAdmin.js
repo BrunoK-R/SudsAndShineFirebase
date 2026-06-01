@@ -169,6 +169,27 @@ function normalizeOptionalText(value, fallback, maxLength) {
   return result;
 }
 
+function timestampToIso(value) {
+  if (!value) return "";
+  if (typeof value === "string") {
+    const parsed = new Date(value);
+    return Number.isNaN(parsed.getTime()) ? "" : parsed.toISOString();
+  }
+  if (value instanceof Date) {
+    return Number.isNaN(value.getTime()) ? "" : value.toISOString();
+  }
+  if (typeof value.toDate === "function") {
+    const parsed = value.toDate();
+    return parsed instanceof Date && !Number.isNaN(parsed.getTime()) ? parsed.toISOString() : "";
+  }
+  if (Number.isFinite(value.seconds)) {
+    const nanoseconds = Number.isFinite(value.nanoseconds) ? value.nanoseconds : 0;
+    const parsed = new Date(value.seconds * 1000 + Math.floor(nanoseconds / 1000000));
+    return Number.isNaN(parsed.getTime()) ? "" : parsed.toISOString();
+  }
+  return "";
+}
+
 function validateAvailabilityConfigurationInput(data = {}) {
   if (!data || typeof data !== "object" || Array.isArray(data)) {
     throw new HttpsError("invalid-argument", "Availability payload is required");
@@ -286,6 +307,8 @@ function normalizeBlockedSlotDoc(docSnap) {
     reason: typeof data.reason === "string" && data.reason.trim() ?
       data.reason.trim().replace(/\s+/g, " ").slice(0, MAX_BLOCKED_SLOT_REASON_LENGTH) :
       "Bloqueio administrativo",
+    updatedAtIso: timestampToIso(data.updatedAt),
+    updatedByUid: typeof data.updatedByUid === "string" ? data.updatedByUid.trim() : "",
   };
 }
 
@@ -313,6 +336,8 @@ function normalizeCapacityOverrideDoc(docSnap) {
   return {
     date,
     maxBookingsPerSlot,
+    updatedAtIso: timestampToIso(data.updatedAt),
+    updatedByUid: typeof data.updatedByUid === "string" ? data.updatedByUid.trim() : "",
   };
 }
 
@@ -355,6 +380,7 @@ module.exports = {
   buildBlockedSlotDocument,
   buildCapacityOverrideDocument,
   readDefaultCapacity,
+  timestampToIso,
   validateAvailabilityConfigurationInput,
   validateBlockedSlotClearInput,
   validateBlockedSlotInput,
