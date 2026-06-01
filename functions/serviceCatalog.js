@@ -195,6 +195,12 @@ function normalizeAdminServiceDocument(docId, data) {
     popular: data.popular === true || data.featured === true,
     active,
     sortOrder: Number.isFinite(Number(data.sortOrder)) ? Number(data.sortOrder) : 999,
+    createdAtIso: timestampToIso(data.createdAt),
+    updatedAtIso: timestampToIso(data.updatedAt),
+    archivedAtIso: timestampToIso(data.archivedAt),
+    createdByUid: String(data.createdByUid || "").trim(),
+    updatedByUid: String(data.updatedByUid || "").trim(),
+    archivedByUid: String(data.archivedByUid || "").trim(),
   };
 }
 
@@ -427,6 +433,27 @@ function normalizeAdminEligibleServiceIds(value) {
     ids.push(id);
   }
   return ids;
+}
+
+function timestampToIso(value) {
+  if (!value) return "";
+  if (typeof value === "string") {
+    const parsed = new Date(value);
+    return Number.isNaN(parsed.getTime()) ? "" : parsed.toISOString();
+  }
+  if (value instanceof Date) {
+    return Number.isNaN(value.getTime()) ? "" : value.toISOString();
+  }
+  if (typeof value.toDate === "function") {
+    const parsed = value.toDate();
+    return parsed instanceof Date && !Number.isNaN(parsed.getTime()) ? parsed.toISOString() : "";
+  }
+  if (Number.isFinite(value.seconds)) {
+    const nanoseconds = Number.isFinite(value.nanoseconds) ? value.nanoseconds : 0;
+    const parsed = new Date(value.seconds * 1000 + Math.floor(nanoseconds / 1000000));
+    return Number.isNaN(parsed.getTime()) ? "" : parsed.toISOString();
+  }
+  return "";
 }
 
 function validateAdminServiceCatalogItemInput(data = {}, fallbackId = "") {

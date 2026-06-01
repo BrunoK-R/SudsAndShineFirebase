@@ -113,12 +113,24 @@ test("buildAdminServiceCatalog includes inactive services with admin metadata", 
     featured: true,
     enabled: false,
     sortOrder: "3",
+    createdAt: new Date("2026-06-01T10:00:00.000Z"),
+    updatedAt: {toDate: () => new Date("2026-06-01T11:30:00.500Z")},
+    archivedAt: "2026-06-01T12:45:00.000Z",
+    createdByUid: " admin-create ",
+    updatedByUid: " admin-update ",
+    archivedByUid: " admin-archive ",
   });
 
   assert.equal(inactive.id, "disabled");
   assert.equal(inactive.name, "Lavagem Desativada");
   assert.equal(inactive.active, false);
   assert.equal(inactive.sortOrder, 3);
+  assert.equal(inactive.createdAtIso, "2026-06-01T10:00:00.000Z");
+  assert.equal(inactive.updatedAtIso, "2026-06-01T11:30:00.500Z");
+  assert.equal(inactive.archivedAtIso, "2026-06-01T12:45:00.000Z");
+  assert.equal(inactive.createdByUid, "admin-create");
+  assert.equal(inactive.updatedByUid, "admin-update");
+  assert.equal(inactive.archivedByUid, "admin-archive");
 
   const catalog = buildAdminServiceCatalog([
     doc("enabled", {
@@ -127,6 +139,8 @@ test("buildAdminServiceCatalog includes inactive services with admin metadata", 
       durationMinutes: 30,
       passengerPriceCents: 2500,
       sortOrder: 2,
+      updatedAt: {seconds: 1780312800, nanoseconds: 250000000},
+      updatedByUid: "admin-seconds",
     }),
     doc("disabled", {
       name: "Disabled",
@@ -141,6 +155,8 @@ test("buildAdminServiceCatalog includes inactive services with admin metadata", 
   assert.deepEqual(catalog.services.map((service) => service.id), ["disabled", "enabled"]);
   assert.equal(catalog.services[0].active, false);
   assert.equal(catalog.services[0].sortOrder, 1);
+  assert.equal(catalog.services[1].updatedAtIso, "2026-06-01T11:20:00.250Z");
+  assert.equal(catalog.services[1].updatedByUid, "admin-seconds");
 });
 
 test("buildAdminServiceCatalog falls back to default active services", () => {
