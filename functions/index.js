@@ -140,6 +140,7 @@ const {
   deliveryFailureUpdate,
   deliverySuppressionUpdate,
   isNotificationOutboxDeliverable,
+  isNotificationQuietHoursDeferralActive,
   isNotificationSendingLeaseExpired,
   nextDeliveryLeaseExpiration,
   notificationDeliveryPreferenceSuppression,
@@ -2488,6 +2489,14 @@ async function claimNotificationOutboxDelivery(docSnap, now = new Date(), notifi
     const outbox = freshSnap.data() || {};
     if (!isNotificationOutboxDeliverable(outbox)) return null;
     if (!isNotificationSendingLeaseExpired(outbox, now)) return null;
+    if (isNotificationQuietHoursDeferralActive(outbox, notificationSettings, now)) {
+      return {
+        ref: freshSnap.ref,
+        state: "deferred",
+        outbox,
+        deferredUntil: outbox.quietHoursDeferredUntil,
+      };
+    }
 
     const previousAttemptCount = Number.isFinite(outbox.attemptCount) ?
       Math.max(0, Math.floor(outbox.attemptCount)) :

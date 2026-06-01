@@ -174,6 +174,18 @@ function notificationQuietHoursDeferral(
   };
 }
 
+function isNotificationQuietHoursDeferralActive(
+  outbox = {},
+  settings = {},
+  now = new Date(),
+  timeZone = null,
+) {
+  if (cleanDeliveryText(outbox.deliveryState, 40) !== "deferred") return false;
+  const deferredUntil = deliveryDate(outbox.quietHoursDeferredUntil);
+  if (!deferredUntil || deferredUntil <= now) return false;
+  return notificationQuietHoursDeferral(outbox, settings, now, timeZone) !== null;
+}
+
 function shouldDeferNotificationForQuietHours(
   outbox = {},
   settings = {},
@@ -465,6 +477,7 @@ module.exports = {
   deliveryFailureUpdate,
   deliverySuppressionUpdate,
   isNotificationQuietHour,
+  isNotificationQuietHoursDeferralActive,
   isNotificationOutboxDeliverable,
   isNotificationSendingLeaseExpired,
   nextDeliveryLeaseExpiration,

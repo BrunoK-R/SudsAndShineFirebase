@@ -8,6 +8,7 @@ const {
   deliveryFailureUpdate,
   deliverySuppressionUpdate,
   isNotificationQuietHour,
+  isNotificationQuietHoursDeferralActive,
   isNotificationOutboxDeliverable,
   isNotificationSendingLeaseExpired,
   nextDeliveryLeaseExpiration,
@@ -366,6 +367,36 @@ test("quiet hours deferral records next delivery window without consuming attemp
     notificationQuietHoursDeferral(outbox(), settings, new Date("2026-01-01T12:00:00.000Z")),
     null,
   );
+});
+
+test("active quiet hours deferral keeps deferred notifications parked", () => {
+  const settings = {
+    quietHoursStart: "22:00",
+    quietHoursEnd: "08:00",
+    quietHoursTimeZone: "UTC",
+  };
+  const now = new Date("2026-01-01T23:30:00.000Z");
+
+  assert.equal(isNotificationQuietHoursDeferralActive(outbox({
+    deliveryState: "deferred",
+    quietHoursDeferredUntil: new Date("2026-01-02T08:00:00.000Z"),
+  }), settings, now), true);
+  assert.equal(isNotificationQuietHoursDeferralActive(outbox({
+    deliveryState: "queued",
+    quietHoursDeferredUntil: new Date("2026-01-02T08:00:00.000Z"),
+  }), settings, now), false);
+  assert.equal(isNotificationQuietHoursDeferralActive(outbox({
+    deliveryState: "deferred",
+    quietHoursDeferredUntil: new Date("2026-01-01T23:00:00.000Z"),
+  }), settings, now), false);
+  assert.equal(isNotificationQuietHoursDeferralActive(outbox({
+    deliveryState: "deferred",
+    quietHoursDeferredUntil: new Date("2026-01-02T08:00:00.000Z"),
+  }), {
+    quietHoursStart: "08:00",
+    quietHoursEnd: "08:00",
+    quietHoursTimeZone: "UTC",
+  }, now), false);
 });
 
 function retryResponse() {
