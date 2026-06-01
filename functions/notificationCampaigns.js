@@ -134,6 +134,27 @@ function scheduledAtIsoFromValue(data = {}) {
   return "";
 }
 
+function timestampToIso(value) {
+  if (!value) return "";
+  if (typeof value === "string") {
+    const parsed = new Date(value);
+    return Number.isNaN(parsed.getTime()) ? "" : parsed.toISOString();
+  }
+  if (value instanceof Date) {
+    return Number.isNaN(value.getTime()) ? "" : value.toISOString();
+  }
+  if (typeof value.toDate === "function") {
+    const parsed = value.toDate();
+    return parsed instanceof Date && !Number.isNaN(parsed.getTime()) ? parsed.toISOString() : "";
+  }
+  if (Number.isFinite(value.seconds)) {
+    const nanoseconds = Number.isFinite(value.nanoseconds) ? value.nanoseconds : 0;
+    const parsed = new Date(value.seconds * 1000 + Math.floor(nanoseconds / 1000000));
+    return Number.isNaN(parsed.getTime()) ? "" : parsed.toISOString();
+  }
+  return "";
+}
+
 function validateNotificationCampaignDraftInput(data = {}, fallbackId = "", now = new Date()) {
   if (!data || typeof data !== "object" || Array.isArray(data)) {
     throw new HttpsError("invalid-argument", "Notification campaign draft payload is required");
@@ -237,6 +258,9 @@ function normalizeNotificationCampaignDraft(docSnap) {
     createdByUid: typeof data.createdByUid === "string" ? data.createdByUid.trim() : "",
     updatedByUid: typeof data.updatedByUid === "string" ? data.updatedByUid.trim() : "",
     archivedByUid: typeof data.archivedByUid === "string" ? data.archivedByUid.trim() : "",
+    createdAtIso: timestampToIso(data.createdAt),
+    updatedAtIso: timestampToIso(data.updatedAt),
+    archivedAtIso: timestampToIso(data.archivedAt),
   };
 }
 

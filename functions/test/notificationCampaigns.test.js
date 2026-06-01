@@ -185,6 +185,10 @@ test("buildAdminNotificationCampaignDrafts normalizes admin campaign list", () =
       targetAudience: "marketing_opt_in_users",
       status: "archived",
       scheduledAtIso: "2026-06-03T09:00:00.000Z",
+      updatedAt: "2026-06-01T12:15:00.000Z",
+      updatedByUid: "admin-updated",
+      archivedAt: {seconds: 1780477200, nanoseconds: 500000000},
+      archivedByUid: "admin-archived",
     }),
     doc("draft", {
       title: "Rascunho",
@@ -192,6 +196,10 @@ test("buildAdminNotificationCampaignDrafts normalizes admin campaign list", () =
       targetAudience: "test_users",
       scheduledAt: {toDate: () => new Date("2026-06-02T09:00:00.000Z")},
       sendBlockedReason: "",
+      createdAt: new Date("2026-06-01T10:00:00.000Z"),
+      createdByUid: "admin-created",
+      updatedAt: {toDate: () => new Date("2026-06-01T11:00:00.000Z")},
+      updatedByUid: "admin-updated",
     }),
     doc("incomplete", {
       title: "",
@@ -206,7 +214,14 @@ test("buildAdminNotificationCampaignDrafts normalizes admin campaign list", () =
   assert.equal(result.campaigns[0].scheduledAtIso, "2026-06-02T09:00:00.000Z");
   assert.equal(result.campaigns[0].sendBlocked, true);
   assert.equal(result.campaigns[0].sendBlockedReason, NOTIFICATION_CAMPAIGN_SEND_BLOCKED_REASON);
+  assert.equal(result.campaigns[0].createdAtIso, "2026-06-01T10:00:00.000Z");
+  assert.equal(result.campaigns[0].createdByUid, "admin-created");
+  assert.equal(result.campaigns[0].updatedAtIso, "2026-06-01T11:00:00.000Z");
+  assert.equal(result.campaigns[0].updatedByUid, "admin-updated");
   assert.equal(result.campaigns[1].marketingConsentRequired, true);
+  assert.equal(result.campaigns[1].updatedAtIso, "2026-06-01T12:15:00.000Z");
+  assert.equal(result.campaigns[1].archivedAtIso, "2026-06-03T09:00:00.500Z");
+  assert.equal(result.campaigns[1].archivedByUid, "admin-archived");
 });
 
 test("normalizeNotificationCampaignDraft falls back to a safe test audience", () => {
