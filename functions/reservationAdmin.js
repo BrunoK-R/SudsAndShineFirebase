@@ -9,6 +9,20 @@ const {timestampToIso} = require("./reservationHistory");
 
 const ADMIN_PENDING_RESERVATION_LIMIT = 100;
 const MAX_REJECTION_REASON_LENGTH = 500;
+const COMPLETABLE_RESERVATION_STATUS_VALUES = [
+  "confirmed",
+  "confirmado",
+  "in_progress",
+  "em_execucao",
+  "em execução",
+];
+const COMPLETED_RESERVATION_STATUS_VALUES = [
+  "completed",
+  "complete",
+  "concluido",
+  "concluído",
+  "done",
+];
 
 function assertAdminRole(role) {
   if (role !== "admin") {
@@ -37,6 +51,17 @@ function validateAdminReservationActionInput(data = {}) {
     reservationId: assertReservationId(data.reservationId || data.id),
     rejectionReason: normalizeRejectionReason(data.reason || data.rejectionReason),
   };
+}
+
+function normalizeReservationStatus(value) {
+  return String(value || "").trim().toLowerCase();
+}
+
+function parseReservationSlotEnd(data) {
+  const rawSlotEnd = String(data?.slotEnd || data?.endTime || data?.end_time || "").trim();
+  if (!rawSlotEnd) return null;
+  const slotEnd = new Date(rawSlotEnd);
+  return Number.isNaN(slotEnd.getTime()) ? null : slotEnd;
 }
 
 function normalizeReservationExtras(data) {
@@ -157,14 +182,44 @@ function assertPendingReservationActionable({reservationSnap, now = new Date()})
   return data;
 }
 
+function assertReservationCompletable({reservationSnap, now = new Date()}) {
+  if (!reservationSnap?.exists) {
+    throw new HttpsError("not-found", "Reservation not found");
+  }
+
+  const data = reservationSnap.data() || {};
+  const status = normalizeReservationStatus(data.status);
+  if (COMPLETED_RESERVATION_STATUS_VALUES.includes(status)) {
+    throw new HttpsError("failed-precondition", "Reservation is already completed");
+  }
+  if (!COMPLETABLE_RESERVATION_STATUS_VALUES.includes(status)) {
+    throw new HttpsError("failed-precondition", "Reservation status cannot be completed");
+  }
+
+  const slotEnd = parseReservationSlotEnd(data);
+  if (!slotEnd) {
+    throw new HttpsError("failed-precondition", "Reservation slot is incomplete");
+  }
+  if (slotEnd > now) {
+    throw new HttpsError("failed-precondition", "Reservation cannot be completed before its scheduled end");
+  }
+
+  return data;
+}
+
 module.exports = {
   ADMIN_PENDING_RESERVATION_LIMIT,
+  COMPLETABLE_RESERVATION_STATUS_VALUES,
+  COMPLETED_RESERVATION_STATUS_VALUES,
   MAX_REJECTION_REASON_LENGTH,
   assertAdminRole,
   assertPendingReservationActionable,
+  assertReservationCompletable,
   assertReservationId,
   buildAdminPendingReservations,
   normalizeAdminPendingReservationDocument,
   normalizeRejectionReason,
+  normalizeReservationStatus,
+  parseReservationSlotEnd,
   validateAdminReservationActionInput,
 };

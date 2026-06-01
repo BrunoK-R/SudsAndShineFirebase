@@ -3,6 +3,7 @@ const test = require("node:test");
 const {
   assertAdminRole,
   assertPendingReservationActionable,
+  assertReservationCompletable,
   buildAdminPendingReservations,
   normalizeRejectionReason,
   validateAdminReservationActionInput,
@@ -114,4 +115,53 @@ test("assertPendingReservationActionable rejects expired and non-pending request
     now,
     reservationSnap: doc("confirmed", {status: "confirmed"}),
   }), /not pending/);
+});
+
+test("assertReservationCompletable allows finished confirmed reservations only", () => {
+  const now = new Date("2026-05-20T12:00:00.000Z");
+
+  const reservation = assertReservationCompletable({
+    now,
+    reservationSnap: doc("confirmed", {
+      status: "confirmed",
+      slotEnd: "2026-05-20T11:59:00.000Z",
+    }),
+  });
+
+  assert.equal(reservation.status, "confirmed");
+  assert.doesNotThrow(() => assertReservationCompletable({
+    now,
+    reservationSnap: doc("legacy", {
+      status: "em_execucao",
+      slotEnd: "2026-05-20T10:00:00.000Z",
+    }),
+  }));
+  assert.throws(() => assertReservationCompletable({
+    now,
+    reservationSnap: doc("future", {
+      status: "confirmed",
+      slotEnd: "2026-05-20T12:01:00.000Z",
+    }),
+  }), /before its scheduled end/);
+  assert.throws(() => assertReservationCompletable({
+    now,
+    reservationSnap: doc("pending", {
+      status: "pending",
+      slotEnd: "2026-05-20T10:00:00.000Z",
+    }),
+  }), /cannot be completed/);
+  assert.throws(() => assertReservationCompletable({
+    now,
+    reservationSnap: doc("completed", {
+      status: "completed",
+      slotEnd: "2026-05-20T10:00:00.000Z",
+    }),
+  }), /already completed/);
+  assert.throws(() => assertReservationCompletable({
+    now,
+    reservationSnap: doc("broken", {
+      status: "confirmed",
+      slotEnd: "not-a-date",
+    }),
+  }), /slot is incomplete/);
 });

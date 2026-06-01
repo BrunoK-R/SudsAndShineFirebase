@@ -80,6 +80,7 @@ const {
 const {
   assertAdminRole,
   assertPendingReservationActionable,
+  assertReservationCompletable,
   buildAdminPendingReservations,
   validateAdminReservationActionInput,
 } = require("./reservationAdmin");
@@ -2126,6 +2127,72 @@ exports.rejectReservation = onCall(async (request) => {
     reservationId: data.reservationId,
     reservationCode,
     status: "rejected",
+  };
+});
+
+exports.completeReservation = onCall(async (request) => {
+  await assertAdminRequest(request);
+  const data = validateAdminReservationActionInput(request.data);
+  const reservationRef = db.collection("reservations").doc(data.reservationId);
+  let reservationCode = "";
+
+  await db.runTransaction(async (tx) => {
+    const reservationSnap = await tx.get(reservationRef);
+    const reservationData = assertReservationCompletable({reservationSnap});
+    const customerUid = String(reservationData.customerUid || "").trim();
+    const outboxRef = db
+      .collection(NOTIFICATION_OUTBOX_COLLECTION)
+      .doc(notificationOutboxDocId("review_prompt", data.reservationId));
+    const reviewRef = customerUid ?
+      db.collection("reservation_reviews").doc(buildReservationReviewId(data.reservationId, customerUid)) :
+      null;
+    const [
+      notificationSettingsSnap,
+      notificationPreferencesSnap,
+      notificationUserSnap,
+      reviewSnap,
+      existingOutboxSnap,
+    ] = customerUid ? await Promise.all([
+      tx.get(notificationSettingsRef()),
+      tx.get(userNotificationPreferencesRef(customerUid)),
+      tx.get(userDocument(customerUid)),
+      tx.get(reviewRef),
+      tx.get(outboxRef),
+    ]) : [null, null, null, null, null];
+
+    reservationCode = String(reservationData.reservationCode || "").trim();
+    tx.update(reservationRef, {
+      status: "completed",
+      completedAt: admin.firestore.FieldValue.serverTimestamp(),
+      completedByUid: request.auth.uid,
+      updatedAt: admin.firestore.FieldValue.serverTimestamp(),
+      updateSource: "admin-mobile-completion",
+    });
+
+    if (customerUid && !reviewSnap.exists && !existingOutboxSnap.exists) {
+      enqueueReservationNotification(tx, {
+        db,
+        templateKey: "review_prompt",
+        reservationId: data.reservationId,
+        reservation: {
+          ...reservationData,
+          status: "completed",
+        },
+        notificationSettingsSnap,
+        userPreferencesSnap: notificationPreferencesSnap,
+        userDocSnap: notificationUserSnap,
+        existingOutboxSnap,
+        actorUid: request.auth.uid,
+        timestamp: admin.firestore.FieldValue.serverTimestamp(),
+      });
+    }
+  });
+
+  return {
+    ok: true,
+    reservationId: data.reservationId,
+    reservationCode,
+    status: "completed",
   };
 });
 
