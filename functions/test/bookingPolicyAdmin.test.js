@@ -14,6 +14,8 @@ test("buildBookingPolicy returns safe defaults when no policy is configured", ()
   assert.equal(policy.cancellationWindowMinutes, 0);
   assert.equal(policy.rescheduleWindowMinutes, 0);
   assert.equal(policy.source, "default");
+  assert.equal(policy.updatedAtIso, "");
+  assert.equal(policy.updatedByUid, "");
 });
 
 test("buildBookingPolicy maps configured policy with legacy keys", () => {
@@ -24,6 +26,8 @@ test("buildBookingPolicy maps configured policy with legacy keys", () => {
       reschedule_window_minutes: "90",
       payment_eligibility_copy: "  Pago   no local  ",
     },
+    updatedAt: new Date("2026-06-01T10:15:00.000Z"),
+    updatedByUid: " admin-updated ",
   }));
 
   assert.deepEqual(policy, {
@@ -32,7 +36,27 @@ test("buildBookingPolicy maps configured policy with legacy keys", () => {
     rescheduleWindowMinutes: 90,
     paymentEligibilityCopy: "Pago no local",
     source: "firestore",
+    updatedAtIso: "2026-06-01T10:15:00.000Z",
+    updatedByUid: "admin-updated",
   });
+});
+
+test("buildBookingPolicy normalizes timestamp-like audit metadata", () => {
+  const fromTimestamp = buildBookingPolicy(doc({
+    value: {pendingHoldMinutes: 60},
+    updatedAt: {seconds: 1780309800, nanoseconds: 500000000},
+    updatedByUid: "admin-ts",
+  }));
+  const fromString = buildBookingPolicy(doc({
+    value: {pendingHoldMinutes: 90},
+    updatedAt: "2026-06-01T12:45:00.000Z",
+    updatedByUid: " admin-string ",
+  }));
+
+  assert.equal(fromTimestamp.updatedAtIso, "2026-06-01T10:30:00.500Z");
+  assert.equal(fromTimestamp.updatedByUid, "admin-ts");
+  assert.equal(fromString.updatedAtIso, "2026-06-01T12:45:00.000Z");
+  assert.equal(fromString.updatedByUid, "admin-string");
 });
 
 test("validateBookingPolicyUpdateInput sanitizes admin settings", () => {

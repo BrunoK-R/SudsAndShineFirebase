@@ -1592,6 +1592,7 @@ exports.updateBookingPolicy = onCall(async (request) => {
   await assertAdminRequest(request);
   const policy = validateBookingPolicyUpdateInput(request.data);
   const value = buildBookingPolicySettingValue(policy);
+  const updatedAt = new Date();
 
   await db.collection("business_settings").doc("booking_policy").set(
     {
@@ -1607,6 +1608,8 @@ exports.updateBookingPolicy = onCall(async (request) => {
   return {
     ...policy,
     source: "firestore",
+    updatedAtIso: updatedAt.toISOString(),
+    updatedByUid: request.auth.uid,
   };
 });
 

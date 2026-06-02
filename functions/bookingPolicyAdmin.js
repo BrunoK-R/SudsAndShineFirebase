@@ -52,6 +52,32 @@ function cleanPaymentCopy(value, fallback = DEFAULT_BOOKING_POLICY.paymentEligib
   return trimmed.slice(0, MAX_PAYMENT_COPY_LENGTH);
 }
 
+function cleanAuditString(value, fallback = "", maxLength = 128) {
+  if (typeof value !== "string") return fallback;
+  const trimmed = value.trim();
+  if (!trimmed) return fallback;
+  return trimmed.slice(0, maxLength);
+}
+
+function timestampToIso(value) {
+  if (!value) return "";
+  if (value instanceof Date && !Number.isNaN(value.getTime())) return value.toISOString();
+  if (typeof value.toDate === "function") {
+    const date = value.toDate();
+    if (date instanceof Date && !Number.isNaN(date.getTime())) return date.toISOString();
+  }
+  if (typeof value.seconds === "number") {
+    const millis = value.seconds * 1000 + Math.floor((value.nanoseconds || 0) / 1000000);
+    const date = new Date(millis);
+    if (!Number.isNaN(date.getTime())) return date.toISOString();
+  }
+  if (typeof value === "string") {
+    const date = new Date(value);
+    if (!Number.isNaN(date.getTime())) return date.toISOString();
+  }
+  return "";
+}
+
 function requiredPaymentCopy(value) {
   if (typeof value !== "string") {
     throw new HttpsError("invalid-argument", "paymentEligibilityCopy is required");
@@ -67,7 +93,8 @@ function requiredPaymentCopy(value) {
 }
 
 function buildBookingPolicy(docSnap = null) {
-  const source = docSnap?.exists ? settingPayload(docSnap.data()) : settingPayload(docSnap);
+  const root = docSnap?.exists ? docSnap.data() : docSnap;
+  const source = settingPayload(root);
   return {
     pendingHoldMinutes: coerceMinutes(
       source.pendingHoldMinutes ?? source.pending_hold_minutes,
@@ -91,6 +118,8 @@ function buildBookingPolicy(docSnap = null) {
       source.paymentEligibilityCopy ?? source.payment_eligibility_copy,
     ),
     source: docSnap?.exists ? "firestore" : "default",
+    updatedAtIso: timestampToIso(root?.updatedAt || source.updatedAt),
+    updatedByUid: cleanAuditString(root?.updatedByUid || source.updatedByUid),
   };
 }
 
