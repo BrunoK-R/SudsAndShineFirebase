@@ -430,6 +430,137 @@ service cloud.firestore {
         request.resource.data.updateSource == 'admin-mobile-booking-policy';
     }
 
+    function isValidLoyaltyRewardValue(value, rewardType) {
+      return (rewardType == 'free_wash' && isIntegerInRange(value, 1, 10)) ||
+        (rewardType == 'discount_amount' && isIntegerInRange(value, 1, 100000)) ||
+        (rewardType == 'discount_percent' && isIntegerInRange(value, 1, 100));
+    }
+
+    function isValidLoyaltySettingsValue(value) {
+      return value is map &&
+        value.keys().hasOnly([
+          'stampsRequired',
+          'rewardType',
+          'rewardValue',
+          'rewardDescription',
+        ]) &&
+        value.keys().hasAll([
+          'stampsRequired',
+          'rewardType',
+          'rewardValue',
+          'rewardDescription',
+        ]) &&
+        isIntegerInRange(value.stampsRequired, 1, 50) &&
+        value.rewardType in ['free_wash', 'discount_amount', 'discount_percent'] &&
+        isValidLoyaltyRewardValue(value.rewardValue, value.rewardType) &&
+        isShortString(value.rewardDescription, 1, 200);
+    }
+
+    function isValidLoyaltySettingsWrite() {
+      return request.resource != null &&
+        request.resource.data.keys().hasOnly([
+          'key',
+          'value',
+          'updatedAt',
+          'updatedByUid',
+          'updateSource',
+        ]) &&
+        request.resource.data.key == 'loyalty_settings' &&
+        isValidLoyaltySettingsValue(request.resource.data.value) &&
+        request.resource.data.updatedAt is timestamp &&
+        request.resource.data.updatedByUid == request.auth.uid &&
+        request.resource.data.updateSource == 'admin-mobile-loyalty';
+    }
+
+    function isClockTime(value) {
+      return value is string && value.matches('^([01][0-9]|2[0-3]):[0-5][0-9]$');
+    }
+
+    function isTimeZoneId(value) {
+      return value is string &&
+        value.size() >= 1 &&
+        value.size() <= 80 &&
+        value.matches('^[A-Za-z_]+(/[A-Za-z0-9_+-]+)*$');
+    }
+
+    function isNotificationTemplateKeyAt(values, index, key) {
+      return values[index] is map && values[index].key == key;
+    }
+
+    function isValidNotificationTemplates(values) {
+      return values is list &&
+        values.size() == 10 &&
+        isNotificationTemplateKeyAt(values, 0, 'booking_request') &&
+        isNotificationTemplateKeyAt(values, 1, 'booking_accepted') &&
+        isNotificationTemplateKeyAt(values, 2, 'booking_rejected') &&
+        isNotificationTemplateKeyAt(values, 3, 'booking_expired') &&
+        isNotificationTemplateKeyAt(values, 4, 'booking_cancelled') &&
+        isNotificationTemplateKeyAt(values, 5, 'booking_rescheduled') &&
+        isNotificationTemplateKeyAt(values, 6, 'booking_reminder') &&
+        isNotificationTemplateKeyAt(values, 7, 'review_prompt') &&
+        isNotificationTemplateKeyAt(values, 8, 'loyalty_reward') &&
+        isNotificationTemplateKeyAt(values, 9, 'admin_pending_booking');
+    }
+
+    function isValidNotificationSettingsValue(value) {
+      return value is map &&
+        value.keys().hasOnly([
+          'bookingStatusEnabled',
+          'appointmentReminderEnabled',
+          'loyaltyEnabled',
+          'adminPendingAlertEnabled',
+          'marketingEnabled',
+          'reminderLeadMinutes',
+          'quietHoursStart',
+          'quietHoursEnd',
+          'quietHoursTimeZone',
+          'templates',
+        ]) &&
+        value.keys().hasAll([
+          'bookingStatusEnabled',
+          'appointmentReminderEnabled',
+          'loyaltyEnabled',
+          'adminPendingAlertEnabled',
+          'marketingEnabled',
+          'reminderLeadMinutes',
+          'quietHoursStart',
+          'quietHoursEnd',
+          'quietHoursTimeZone',
+          'templates',
+        ]) &&
+        value.bookingStatusEnabled is bool &&
+        value.appointmentReminderEnabled is bool &&
+        value.loyaltyEnabled is bool &&
+        value.adminPendingAlertEnabled is bool &&
+        value.marketingEnabled is bool &&
+        isIntegerInRange(value.reminderLeadMinutes, 15, 10080) &&
+        isClockTime(value.quietHoursStart) &&
+        isClockTime(value.quietHoursEnd) &&
+        isTimeZoneId(value.quietHoursTimeZone) &&
+        isValidNotificationTemplates(value.templates);
+    }
+
+    function isValidNotificationSettingsWrite() {
+      return request.resource != null &&
+        request.resource.data.keys().hasOnly([
+          'key',
+          'value',
+          'updatedAt',
+          'updatedByUid',
+          'updateSource',
+        ]) &&
+        request.resource.data.key == 'notification_settings' &&
+        isValidNotificationSettingsValue(request.resource.data.value) &&
+        request.resource.data.updatedAt is timestamp &&
+        request.resource.data.updatedByUid == request.auth.uid &&
+        request.resource.data.updateSource == 'admin-mobile-notifications';
+    }
+
+    function isValidAdminSettingsWrite(docId) {
+      return (docId == 'loyalty_settings' && isValidLoyaltySettingsWrite()) ||
+        (docId == 'notification_settings' && isValidNotificationSettingsWrite());
+    }
+
     function isValidBusinessSettingsWrite(docId) {
       return (docId == 'booking_policy' && isValidBookingPolicyWrite()) ||
         (docId in ['default_max_bookings_per_slot', 'default_slot_interval_minutes'] &&
@@ -623,7 +754,9 @@ service cloud.firestore {
     }
 
     match /admin_settings/{docId} {
-      allow read, write: if isAdmin();
+      allow read: if isAdmin();
+      allow create, update: if isAdmin() && isValidAdminSettingsWrite(docId);
+      allow delete: if false;
     }
 
     match /reservations/{docId} {

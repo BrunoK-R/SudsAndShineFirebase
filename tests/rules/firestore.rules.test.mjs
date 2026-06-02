@@ -167,6 +167,63 @@ function validServiceExtraPayload({
   };
 }
 
+function validLoyaltySettingsPayload(now = Timestamp.fromDate(new Date())) {
+  return {
+    key: 'loyalty_settings',
+    value: {
+      stampsRequired: 8,
+      rewardType: 'discount_amount',
+      rewardValue: 1500,
+      rewardDescription: '15 euros de desconto',
+    },
+    updatedAt: now,
+    updatedByUid: 'admin-1',
+    updateSource: 'admin-mobile-loyalty',
+  };
+}
+
+function validNotificationTemplate(key) {
+  return {
+    key,
+    label: `${key} label`,
+    enabled: true,
+    title: `${key} title`,
+    body: `${key} body`,
+  };
+}
+
+function validNotificationSettingsPayload(now = Timestamp.fromDate(new Date())) {
+  return {
+    key: 'notification_settings',
+    value: {
+      bookingStatusEnabled: true,
+      appointmentReminderEnabled: true,
+      loyaltyEnabled: true,
+      adminPendingAlertEnabled: true,
+      marketingEnabled: false,
+      reminderLeadMinutes: 120,
+      quietHoursStart: '22:00',
+      quietHoursEnd: '08:00',
+      quietHoursTimeZone: 'Europe/Lisbon',
+      templates: [
+        'booking_request',
+        'booking_accepted',
+        'booking_rejected',
+        'booking_expired',
+        'booking_cancelled',
+        'booking_rescheduled',
+        'booking_reminder',
+        'review_prompt',
+        'loyalty_reward',
+        'admin_pending_booking',
+      ].map(validNotificationTemplate),
+    },
+    updatedAt: now,
+    updatedByUid: 'admin-1',
+    updateSource: 'admin-mobile-notifications',
+  };
+}
+
 test.before(async () => {
   testEnv = await initializeTestEnvironment({
     projectId: PROJECT_ID,
@@ -365,6 +422,10 @@ test('availability business settings require admin audit and safe shape', async 
 });
 
 test('admin settings are hidden from non-admin direct clients', async () => {
+  const now = Timestamp.fromDate(new Date());
+  const validLoyalty = validLoyaltySettingsPayload(now);
+  const validNotifications = validNotificationSettingsPayload(now);
+
   await seedDoc('admin_settings', 'loyalty_settings', {
     value: {
       stampsRequired: 8,
@@ -395,11 +456,96 @@ test('admin settings are hidden from non-admin direct clients', async () => {
   }));
   await assertSucceeds(getDoc(doc(adminDb(), 'admin_settings', 'loyalty_settings')));
   await assertSucceeds(getDoc(doc(adminDb(), 'admin_settings', 'notification_settings')));
-  await assertSucceeds(setDoc(doc(adminDb(), 'admin_settings', 'loyalty_settings'), {
+  await assertFails(setDoc(doc(adminDb(), 'admin_settings', 'loyalty_settings'), {
     value: {stampsRequired: 8},
   }));
-  await assertSucceeds(setDoc(doc(adminDb(), 'admin_settings', 'notification_settings'), {
+  await assertFails(setDoc(doc(adminDb(), 'admin_settings', 'notification_settings'), {
     value: {bookingStatusEnabled: true},
+  }));
+  await assertSucceeds(setDoc(doc(adminDb(), 'admin_settings', 'loyalty_settings'), validLoyalty));
+  await assertSucceeds(setDoc(doc(adminDb(), 'admin_settings', 'notification_settings'), validNotifications));
+  await assertFails(deleteDoc(doc(adminDb(), 'admin_settings', 'loyalty_settings')));
+  await assertFails(deleteDoc(doc(adminDb(), 'admin_settings', 'notification_settings')));
+});
+
+test('admin settings direct writes require safe settings and audit metadata', async () => {
+  const now = Timestamp.fromDate(new Date());
+  const validLoyalty = validLoyaltySettingsPayload(now);
+  const validNotifications = validNotificationSettingsPayload(now);
+
+  await assertFails(setDoc(doc(adminDb(), 'admin_settings', 'loyalty_settings'), {
+    ...validLoyalty,
+    updatedByUid: 'other-admin',
+  }));
+  await assertFails(setDoc(doc(adminDb(), 'admin_settings', 'loyalty_settings'), {
+    ...validLoyalty,
+    updateSource: 'console',
+  }));
+  await assertFails(setDoc(doc(adminDb(), 'admin_settings', 'loyalty_settings'), {
+    ...validLoyalty,
+    value: {
+      ...validLoyalty.value,
+      rewardType: 'discount_percent',
+      rewardValue: 150,
+    },
+  }));
+  await assertSucceeds(setDoc(doc(adminDb(), 'admin_settings', 'loyalty_settings'), validLoyalty));
+  await assertSucceeds(updateDoc(doc(adminDb(), 'admin_settings', 'loyalty_settings'), {
+    value: {
+      ...validLoyalty.value,
+      stampsRequired: 10,
+      rewardType: 'free_wash',
+      rewardValue: 1,
+      rewardDescription: '1 lavagem grátis',
+    },
+    updatedAt: now,
+    updatedByUid: 'admin-1',
+    updateSource: 'admin-mobile-loyalty',
+  }));
+
+  await assertFails(setDoc(doc(adminDb(), 'admin_settings', 'notification_settings'), {
+    ...validNotifications,
+    updatedByUid: 'other-admin',
+  }));
+  await assertFails(setDoc(doc(adminDb(), 'admin_settings', 'notification_settings'), {
+    ...validNotifications,
+    value: {
+      ...validNotifications.value,
+      reminderLeadMinutes: 10,
+    },
+  }));
+  await assertFails(setDoc(doc(adminDb(), 'admin_settings', 'notification_settings'), {
+    ...validNotifications,
+    value: {
+      ...validNotifications.value,
+      quietHoursStart: '24:00',
+    },
+  }));
+  await assertFails(setDoc(doc(adminDb(), 'admin_settings', 'notification_settings'), {
+    ...validNotifications,
+    value: {
+      ...validNotifications.value,
+      templates: validNotifications.value.templates.slice(0, 9),
+    },
+  }));
+  await assertFails(setDoc(doc(adminDb(), 'admin_settings', 'notification_settings'), {
+    ...validNotifications,
+    value: {
+      ...validNotifications.value,
+      templates: validNotifications.value.templates.map((template, index) =>
+        index === 0 ? {...template, key: 'booking_accepted'} : template),
+    },
+  }));
+  await assertSucceeds(setDoc(doc(adminDb(), 'admin_settings', 'notification_settings'), validNotifications));
+  await assertSucceeds(updateDoc(doc(adminDb(), 'admin_settings', 'notification_settings'), {
+    value: {
+      ...validNotifications.value,
+      reminderLeadMinutes: 240,
+      quietHoursTimeZone: 'Atlantic/Azores',
+    },
+    updatedAt: now,
+    updatedByUid: 'admin-1',
+    updateSource: 'admin-mobile-notifications',
   }));
 });
 
