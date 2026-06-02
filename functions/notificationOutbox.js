@@ -13,8 +13,6 @@ const BOOKING_STATUS_TEMPLATE_KEYS = new Set([
   "booking_rescheduled",
 ]);
 const REVIEW_PROMPT_RESERVATION_STATUS_VALUES = [
-  "confirmed",
-  "confirmado",
   "completed",
   "complete",
   "concluido",

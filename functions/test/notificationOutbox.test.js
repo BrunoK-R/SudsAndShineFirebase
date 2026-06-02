@@ -608,9 +608,10 @@ test("buildAdminTestNotificationOutboxDocument respects disabled settings", () =
 });
 
 test("isReviewPromptReservationDue requires owned completed past reservations", () => {
-  assert.deepEqual(REVIEW_PROMPT_RESERVATION_STATUS_VALUES.includes("confirmed"), true);
+  assert.deepEqual(REVIEW_PROMPT_RESERVATION_STATUS_VALUES.includes("completed"), true);
+  assert.deepEqual(REVIEW_PROMPT_RESERVATION_STATUS_VALUES.includes("confirmed"), false);
   assert.equal(isReviewPromptReservationDue(reservation({
-    status: "confirmed",
+    status: "completed",
     slotEnd: "2026-05-31T15:00:00.000Z",
   }), new Date("2026-05-31T16:00:00.000Z")), true);
   assert.equal(isReviewPromptReservationDue(reservation({
@@ -619,11 +620,15 @@ test("isReviewPromptReservationDue requires owned completed past reservations", 
   }), new Date("2026-05-31T16:00:00.000Z")), false);
   assert.equal(isReviewPromptReservationDue(reservation({
     status: "confirmed",
+    slotEnd: "2026-05-31T15:00:00.000Z",
+  }), new Date("2026-05-31T16:00:00.000Z")), false);
+  assert.equal(isReviewPromptReservationDue(reservation({
+    status: "completed",
     slotEnd: "2026-05-31T17:00:00.000Z",
   }), new Date("2026-05-31T16:00:00.000Z")), false);
   assert.equal(isReviewPromptReservationDue(reservation({
     customerUid: "",
-    status: "confirmed",
+    status: "completed",
     slotEnd: "2026-05-31T15:00:00.000Z",
   }), new Date("2026-05-31T16:00:00.000Z")), false);
 });
