@@ -3,6 +3,8 @@ const assert = require("node:assert/strict");
 const {
   NOTIFICATION_CAMPAIGN_SEND_BLOCKED_REASON,
   buildAdminNotificationCampaignDrafts,
+  buildNotificationCampaignDraftArchiveValue,
+  buildNotificationCampaignDraftMutationReceipt,
   buildNotificationCampaignDraftValue,
   normalizeNotificationCampaignDraft,
   validateNotificationCampaignDraftArchiveInput,
@@ -43,6 +45,7 @@ test("validateNotificationCampaignDraftInput builds safe draft-only campaign doc
     title: "Oferta de verão",
     body: "Lavagem premium com desconto",
     targetAudience: "marketing_opt_in_users",
+    audienceType: "marketing_opt_in_users",
     channels: ["push"],
     marketingConsentRequired: true,
     status: "draft",
@@ -51,6 +54,8 @@ test("validateNotificationCampaignDraftInput builds safe draft-only campaign doc
     notes: "Confirmar copy antes do envio",
     sendBlocked: true,
     sendBlockedReason: NOTIFICATION_CAMPAIGN_SEND_BLOCKED_REASON,
+    deliveryLocked: true,
+    sendState: "draft_only",
     updateSource: "admin-mobile-notification-campaigns",
   });
 });
@@ -174,6 +179,34 @@ test("validateNotificationCampaignDraftArchiveInput rejects path-like ids", () =
     () => validateNotificationCampaignDraftArchiveInput({campaignId: "../spring-draft"}),
     /campaignId is invalid/,
   );
+});
+
+test("buildNotificationCampaignDraftArchiveValue keeps archived campaigns send locked", () => {
+  assert.deepEqual(buildNotificationCampaignDraftArchiveValue(), {
+    status: "archived",
+    sendBlocked: true,
+    sendBlockedReason: NOTIFICATION_CAMPAIGN_SEND_BLOCKED_REASON,
+    deliveryLocked: true,
+    sendState: "draft_only",
+    updateSource: "admin-mobile-notification-campaigns",
+  });
+});
+
+test("buildNotificationCampaignDraftMutationReceipt reports blocked send state", () => {
+  assert.deepEqual(buildNotificationCampaignDraftMutationReceipt({
+    campaignId: "summer-test",
+    status: "draft",
+    created: true,
+    targetAudience: "marketing_opt_in_users",
+  }), {
+    ok: true,
+    created: true,
+    campaignId: "summer-test",
+    status: "draft",
+    targetAudience: "marketing_opt_in_users",
+    sendBlocked: true,
+    sendBlockedReason: NOTIFICATION_CAMPAIGN_SEND_BLOCKED_REASON,
+  });
 });
 
 test("buildAdminNotificationCampaignDrafts normalizes admin campaign list", () => {

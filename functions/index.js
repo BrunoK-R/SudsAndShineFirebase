@@ -107,6 +107,8 @@ const {
 const {
   NOTIFICATION_CAMPAIGN_DRAFTS_COLLECTION,
   buildAdminNotificationCampaignDrafts,
+  buildNotificationCampaignDraftArchiveValue,
+  buildNotificationCampaignDraftMutationReceipt,
   buildNotificationCampaignDraftValue,
   normalizeNotificationCampaignDraft,
   validateNotificationCampaignDraftArchiveInput,
@@ -1781,15 +1783,12 @@ exports.upsertAdminNotificationCampaignDraft = onCall(async (request) => {
     tx.set(campaignRef, update, {merge: true});
   });
 
-  return {
-    ok: true,
+  return buildNotificationCampaignDraftMutationReceipt({
     created,
     campaignId: draft.campaignId,
     status: draft.status,
     targetAudience: draft.targetAudience,
-    sendBlocked: true,
-    sendBlockedReason: draft.sendBlockedReason,
-  };
+  });
 });
 
 exports.archiveAdminNotificationCampaignDraft = onCall(async (request) => {
@@ -1809,22 +1808,18 @@ exports.archiveAdminNotificationCampaignDraft = onCall(async (request) => {
     }
 
     tx.update(campaignRef, {
-      status: "archived",
+      ...buildNotificationCampaignDraftArchiveValue(),
       archivedAt: admin.firestore.FieldValue.serverTimestamp(),
       archivedByUid: request.auth.uid,
       updatedAt: admin.firestore.FieldValue.serverTimestamp(),
       updatedByUid: request.auth.uid,
-      updateSource: "admin-mobile-notification-campaigns",
-      sendBlocked: true,
-      sendBlockedReason: "campaign-send-not-implemented",
     });
   });
 
-  return {
-    ok: true,
+  return buildNotificationCampaignDraftMutationReceipt({
     campaignId: data.campaignId,
     status: "archived",
-  };
+  });
 });
 
 exports.updateAvailabilityConfiguration = onCall(async (request) => {

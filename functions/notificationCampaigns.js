@@ -3,6 +3,8 @@ const {HttpsError} = require("firebase-functions/v2/https");
 const NOTIFICATION_CAMPAIGN_DRAFTS_COLLECTION = "notification_campaign_drafts";
 const NOTIFICATION_CAMPAIGNS_COLLECTION = NOTIFICATION_CAMPAIGN_DRAFTS_COLLECTION;
 const NOTIFICATION_CAMPAIGN_SEND_BLOCKED_REASON = "campaign-send-not-implemented";
+const NOTIFICATION_CAMPAIGN_SEND_STATE = "draft_only";
+const NOTIFICATION_CAMPAIGN_UPDATE_SOURCE = "admin-mobile-notification-campaigns";
 
 const TARGET_AUDIENCE_TEST_USERS = "test_users";
 const TARGET_AUDIENCE_MARKETING_OPT_IN_USERS = "marketing_opt_in_users";
@@ -195,7 +197,7 @@ function validateNotificationCampaignDraftInput(data = {}, fallbackId = "", now 
     sendBlocked: true,
     sendBlockedReason: NOTIFICATION_CAMPAIGN_SEND_BLOCKED_REASON,
     deliveryLocked: true,
-    sendState: "draft_only",
+    sendState: NOTIFICATION_CAMPAIGN_SEND_STATE,
   };
   return draft;
 }
@@ -215,6 +217,7 @@ function buildNotificationCampaignDraftValue(draft) {
     title: draft.title,
     body: draft.body,
     targetAudience: draft.targetAudience,
+    audienceType: draft.targetAudience,
     channels: draft.channels,
     marketingConsentRequired: draft.marketingConsentRequired,
     status: draft.status,
@@ -223,7 +226,37 @@ function buildNotificationCampaignDraftValue(draft) {
     notes: draft.notes,
     sendBlocked: true,
     sendBlockedReason: NOTIFICATION_CAMPAIGN_SEND_BLOCKED_REASON,
-    updateSource: "admin-mobile-notification-campaigns",
+    deliveryLocked: true,
+    sendState: NOTIFICATION_CAMPAIGN_SEND_STATE,
+    updateSource: NOTIFICATION_CAMPAIGN_UPDATE_SOURCE,
+  };
+}
+
+function buildNotificationCampaignDraftArchiveValue() {
+  return {
+    status: "archived",
+    sendBlocked: true,
+    sendBlockedReason: NOTIFICATION_CAMPAIGN_SEND_BLOCKED_REASON,
+    deliveryLocked: true,
+    sendState: NOTIFICATION_CAMPAIGN_SEND_STATE,
+    updateSource: NOTIFICATION_CAMPAIGN_UPDATE_SOURCE,
+  };
+}
+
+function buildNotificationCampaignDraftMutationReceipt({
+  campaignId,
+  status,
+  created = false,
+  targetAudience = "",
+}) {
+  return {
+    ok: true,
+    created,
+    campaignId,
+    status,
+    targetAudience,
+    sendBlocked: true,
+    sendBlockedReason: NOTIFICATION_CAMPAIGN_SEND_BLOCKED_REASON,
   };
 }
 
@@ -288,6 +321,8 @@ module.exports = {
   NOTIFICATION_CAMPAIGNS_COLLECTION,
   NOTIFICATION_CAMPAIGN_SEND_BLOCKED_REASON,
   buildAdminNotificationCampaignDrafts,
+  buildNotificationCampaignDraftArchiveValue,
+  buildNotificationCampaignDraftMutationReceipt,
   buildNotificationCampaignDraftValue,
   normalizeNotificationCampaignDraft,
   validateNotificationCampaignArchiveInput: validateNotificationCampaignDraftArchiveInput,
