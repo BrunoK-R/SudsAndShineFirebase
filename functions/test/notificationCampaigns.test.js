@@ -200,6 +200,7 @@ test("buildAdminNotificationCampaignDrafts normalizes admin campaign list", () =
       createdByUid: "admin-created",
       updatedAt: {toDate: () => new Date("2026-06-01T11:00:00.000Z")},
       updatedByUid: "admin-updated",
+      sendBlocked: false,
     }),
     doc("incomplete", {
       title: "",
