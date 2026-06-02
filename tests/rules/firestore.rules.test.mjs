@@ -117,6 +117,56 @@ function validCapacityOverridePayload(now = Timestamp.fromDate(new Date())) {
   };
 }
 
+function validServicePayload({
+  id = 'admin-service',
+  active = true,
+  updatedByUid = 'admin-1',
+  createdByUid = 'admin-1',
+  now = Timestamp.fromDate(new Date()),
+} = {}) {
+  return {
+    id,
+    name: 'Lavagem Admin',
+    description: 'Serviço gerido no mobile admin.',
+    durationMinutes: 45,
+    passengerPriceCents: 3200,
+    suvPriceCents: 3400,
+    iconKey: 'sparkles',
+    popular: false,
+    active,
+    enabled: active,
+    sortOrder: 20,
+    createdAt: now,
+    updatedAt: now,
+    createdByUid,
+    updatedByUid,
+  };
+}
+
+function validServiceExtraPayload({
+  id = 'admin-extra',
+  active = true,
+  updatedByUid = 'admin-1',
+  createdByUid = 'admin-1',
+  now = Timestamp.fromDate(new Date()),
+} = {}) {
+  return {
+    id,
+    name: 'Extra Admin',
+    description: 'Extra gerido no mobile admin.',
+    priceCents: 1500,
+    iconKey: 'shield',
+    eligibleServiceIds: ['admin-service'],
+    active,
+    enabled: active,
+    sortOrder: 10,
+    createdAt: now,
+    updatedAt: now,
+    createdByUid,
+    updatedByUid,
+  };
+}
+
 test.before(async () => {
   testEnv = await initializeTestEnvironment({
     projectId: PROJECT_ID,
@@ -134,23 +184,94 @@ test.after(async () => {
 });
 
 test('public can read services but cannot write them', async () => {
-  await seedDoc('services', 'basic-wash', {name: 'Lavagem Básica', active: true});
+  const now = Timestamp.fromDate(new Date());
+  await seedDoc('services', 'basic-wash', validServicePayload({
+    id: 'basic-wash',
+    now,
+  }));
 
   const db = unauthDb();
   await assertSucceeds(getDoc(doc(db, 'services', 'basic-wash')));
   await assertFails(setDoc(doc(db, 'services', 'new-service'), {name: 'Hack'}));
   await assertFails(setDoc(doc(staffDb(), 'services', 'staff-service'), {name: 'Staff overwrite'}));
-  await assertSucceeds(setDoc(doc(adminDb(), 'services', 'admin-service'), {name: 'Admin service'}));
+  await assertFails(setDoc(doc(adminDb(), 'services', 'admin-service'), {name: 'Admin service'}));
+  await assertFails(setDoc(doc(adminDb(), 'services', 'admin-service'), {
+    ...validServicePayload({id: 'other-service', now}),
+  }));
+  await assertFails(setDoc(doc(adminDb(), 'services', 'bad.path'), validServicePayload({id: 'bad.path', now})));
+  await assertFails(setDoc(doc(adminDb(), 'services', 'admin-service'), {
+    ...validServicePayload({id: 'admin-service', now}),
+    internalNote: 'not allowed',
+  }));
+  await assertSucceeds(setDoc(
+    doc(adminDb(), 'services', 'admin-service'),
+    validServicePayload({id: 'admin-service', now}),
+  ));
+  await assertSucceeds(updateDoc(doc(adminDb(), 'services', 'admin-service'), {
+    active: false,
+    enabled: false,
+    archivedAt: now,
+    archivedByUid: 'admin-1',
+    updatedAt: now,
+    updatedByUid: 'admin-1',
+  }));
+  await assertFails(updateDoc(doc(adminDb(), 'services', 'admin-service'), {
+    updatedAt: now,
+    updatedByUid: 'other-admin',
+  }));
+  await assertFails(deleteDoc(doc(adminDb(), 'services', 'admin-service')));
 });
 
 test('service extras are admin-only for direct clients', async () => {
-  await seedDoc('service_extras', 'wax', {name: 'Enceramento', active: true});
+  const now = Timestamp.fromDate(new Date());
+  await seedDoc('service_extras', 'wax', validServiceExtraPayload({
+    id: 'wax',
+    now,
+  }));
 
   await assertFails(getDoc(doc(unauthDb(), 'service_extras', 'wax')));
   await assertFails(setDoc(doc(unauthDb(), 'service_extras', 'new-extra'), {name: 'Hack'}));
   await assertFails(setDoc(doc(staffDb(), 'service_extras', 'staff-extra'), {name: 'Staff overwrite'}));
   await assertSucceeds(getDoc(doc(adminDb(), 'service_extras', 'wax')));
-  await assertSucceeds(setDoc(doc(adminDb(), 'service_extras', 'admin-extra'), {name: 'Admin extra'}));
+  await assertFails(setDoc(doc(adminDb(), 'service_extras', 'admin-extra'), {name: 'Admin extra'}));
+  await assertFails(setDoc(doc(adminDb(), 'service_extras', 'admin-extra'), {
+    ...validServiceExtraPayload({id: 'other-extra', now}),
+  }));
+  await assertFails(setDoc(doc(adminDb(), 'service_extras', 'admin-extra'), {
+    ...validServiceExtraPayload({id: 'admin-extra', now}),
+    updateSource: 'console',
+  }));
+  await assertFails(setDoc(doc(adminDb(), 'service_extras', 'admin-extra'), {
+    ...validServiceExtraPayload({id: 'admin-extra', now}),
+    eligibleServiceIds: ['admin-service', 'bad/path'],
+  }));
+  await assertFails(setDoc(doc(adminDb(), 'service_extras', 'admin-extra'), {
+    ...validServiceExtraPayload({id: 'admin-extra', now}),
+    eligibleServiceIds: ['admin-service', 123],
+  }));
+  await assertSucceeds(setDoc(
+    doc(adminDb(), 'service_extras', 'admin-extra'),
+    validServiceExtraPayload({id: 'admin-extra', now}),
+  ));
+  await assertSucceeds(updateDoc(doc(adminDb(), 'service_extras', 'admin-extra'), {
+    eligibleServiceIds: Array.from({length: 12}, (_, index) => `service-${index}`),
+    updatedAt: now,
+    updatedByUid: 'admin-1',
+  }));
+  await assertSucceeds(updateDoc(doc(adminDb(), 'service_extras', 'admin-extra'), {
+    active: false,
+    enabled: false,
+    archivedAt: now,
+    archivedByUid: 'admin-1',
+    updatedAt: now,
+    updatedByUid: 'admin-1',
+  }));
+  await assertFails(updateDoc(doc(adminDb(), 'service_extras', 'admin-extra'), {
+    eligibleServiceIds: Array.from({length: 13}, (_, index) => `service-${index}`),
+    updatedAt: now,
+    updatedByUid: 'admin-1',
+  }));
+  await assertFails(deleteDoc(doc(adminDb(), 'service_extras', 'admin-extra')));
 });
 
 test('employee can write portfolio while public cannot', async () => {

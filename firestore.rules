@@ -74,6 +74,155 @@ service cloud.firestore {
       return value in ['android', 'ios', 'web'];
     }
 
+    function isCatalogDocumentId(docId) {
+      return docId.matches('^[A-Za-z0-9_-]{1,80}$');
+    }
+
+    function isCatalogDocumentIdAt(values, index) {
+      return values.size() <= index ||
+        (values[index] is string && isCatalogDocumentId(values[index]));
+    }
+
+    function isCatalogDocumentIdList(values) {
+      return values is list &&
+        values.size() <= 12 &&
+        isCatalogDocumentIdAt(values, 0) &&
+        isCatalogDocumentIdAt(values, 1) &&
+        isCatalogDocumentIdAt(values, 2) &&
+        isCatalogDocumentIdAt(values, 3) &&
+        isCatalogDocumentIdAt(values, 4) &&
+        isCatalogDocumentIdAt(values, 5) &&
+        isCatalogDocumentIdAt(values, 6) &&
+        isCatalogDocumentIdAt(values, 7) &&
+        isCatalogDocumentIdAt(values, 8) &&
+        isCatalogDocumentIdAt(values, 9) &&
+        isCatalogDocumentIdAt(values, 10) &&
+        isCatalogDocumentIdAt(values, 11);
+    }
+
+    function createdAuditMatchesCaller() {
+      return request.resource.data.createdAt is timestamp &&
+        request.resource.data.createdByUid == request.auth.uid;
+    }
+
+    function createdAuditPreservedIfPresent() {
+      return (!resource.data.keys().hasAny(['createdAt']) ||
+          (request.resource.data.keys().hasAny(['createdAt']) &&
+            request.resource.data.createdAt == resource.data.createdAt)) &&
+        (!resource.data.keys().hasAny(['createdByUid']) ||
+          (request.resource.data.keys().hasAny(['createdByUid']) &&
+            request.resource.data.createdByUid == resource.data.createdByUid));
+    }
+
+    function archivedAuditShapeValid() {
+      return (request.resource.data.active == false ||
+          !request.resource.data.keys().hasAny(['archivedAt', 'archivedByUid'])) &&
+        optionalTimestampField('archivedAt') &&
+        optionalStringField('archivedByUid', 128);
+    }
+
+    function isValidServiceCatalogWrite(docId) {
+      return request.resource != null &&
+        isCatalogDocumentId(docId) &&
+        request.resource.data.keys().hasOnly([
+          'id',
+          'name',
+          'description',
+          'durationMinutes',
+          'passengerPriceCents',
+          'suvPriceCents',
+          'iconKey',
+          'popular',
+          'active',
+          'enabled',
+          'sortOrder',
+          'createdAt',
+          'updatedAt',
+          'archivedAt',
+          'createdByUid',
+          'updatedByUid',
+          'archivedByUid',
+        ]) &&
+        request.resource.data.keys().hasAll([
+          'id',
+          'name',
+          'description',
+          'durationMinutes',
+          'passengerPriceCents',
+          'suvPriceCents',
+          'iconKey',
+          'popular',
+          'active',
+          'enabled',
+          'sortOrder',
+          'updatedAt',
+          'updatedByUid',
+        ]) &&
+        request.resource.data.id == docId &&
+        isShortString(request.resource.data.name, 1, 120) &&
+        isShortString(request.resource.data.description, 0, 1000) &&
+        isIntegerInRange(request.resource.data.durationMinutes, 5, 480) &&
+        isIntegerInRange(request.resource.data.passengerPriceCents, 0, 100000) &&
+        isIntegerInRange(request.resource.data.suvPriceCents, 0, 100000) &&
+        isShortString(request.resource.data.iconKey, 1, 40) &&
+        request.resource.data.popular is bool &&
+        request.resource.data.active is bool &&
+        request.resource.data.enabled is bool &&
+        request.resource.data.enabled == request.resource.data.active &&
+        isIntegerInRange(request.resource.data.sortOrder, 0, 9999) &&
+        request.resource.data.updatedAt is timestamp &&
+        request.resource.data.updatedByUid == request.auth.uid &&
+        archivedAuditShapeValid();
+    }
+
+    function isValidServiceExtraWrite(docId) {
+      return request.resource != null &&
+        isCatalogDocumentId(docId) &&
+        request.resource.data.keys().hasOnly([
+          'id',
+          'name',
+          'description',
+          'priceCents',
+          'iconKey',
+          'eligibleServiceIds',
+          'active',
+          'enabled',
+          'sortOrder',
+          'createdAt',
+          'updatedAt',
+          'archivedAt',
+          'createdByUid',
+          'updatedByUid',
+          'archivedByUid',
+        ]) &&
+        request.resource.data.keys().hasAll([
+          'id',
+          'name',
+          'description',
+          'priceCents',
+          'iconKey',
+          'eligibleServiceIds',
+          'active',
+          'enabled',
+          'sortOrder',
+          'updatedAt',
+          'updatedByUid',
+        ]) &&
+        request.resource.data.id == docId &&
+        isShortString(request.resource.data.name, 1, 120) &&
+        isShortString(request.resource.data.description, 0, 1000) &&
+        isIntegerInRange(request.resource.data.priceCents, 0, 100000) &&
+        isShortString(request.resource.data.iconKey, 1, 40) &&
+        isCatalogDocumentIdList(request.resource.data.eligibleServiceIds) &&
+        request.resource.data.active is bool &&
+        request.resource.data.enabled is bool &&
+        request.resource.data.enabled == request.resource.data.active &&
+        isIntegerInRange(request.resource.data.sortOrder, 0, 9999) &&
+        request.resource.data.updatedAt is timestamp &&
+        request.resource.data.updatedByUid == request.auth.uid &&
+        archivedAuditShapeValid();
+    }
+
     function isValidPublicReservationCreate() {
       return request.resource.data.keys().hasOnly([
           'reservationCode',
@@ -440,11 +589,26 @@ service cloud.firestore {
 
     match /services/{docId} {
       allow read: if true;
-      allow write: if isAdmin();
+      allow create: if isAdmin() &&
+        isValidServiceCatalogWrite(docId) &&
+        createdAuditMatchesCaller();
+      allow update: if isAdmin() &&
+        exists(/databases/$(database)/documents/services/$(docId)) &&
+        isValidServiceCatalogWrite(docId) &&
+        createdAuditPreservedIfPresent();
+      allow delete: if false;
     }
 
     match /service_extras/{docId} {
-      allow read, write: if isAdmin();
+      allow read: if isAdmin();
+      allow create: if isAdmin() &&
+        isValidServiceExtraWrite(docId) &&
+        createdAuditMatchesCaller();
+      allow update: if isAdmin() &&
+        exists(/databases/$(database)/documents/service_extras/$(docId)) &&
+        isValidServiceExtraWrite(docId) &&
+        createdAuditPreservedIfPresent();
+      allow delete: if false;
     }
 
     match /portfolio_items/{docId} {
