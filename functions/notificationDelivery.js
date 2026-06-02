@@ -16,6 +16,7 @@ const BOOKING_STATUS_DELIVERY_TEMPLATE_KEYS = new Set([
 const ADMIN_PENDING_BOOKING_TEMPLATE_KEY = "admin_pending_booking";
 const BOOKING_REMINDER_TEMPLATE_KEY = "booking_reminder";
 const LOYALTY_REWARD_TEMPLATE_KEY = "loyalty_reward";
+const ADMIN_TEST_NOTIFICATION_TYPE = "admin_test_notification";
 
 const TERMINAL_TOKEN_ERROR_CODES = new Set([
   "messaging/invalid-registration-token",
@@ -118,14 +119,36 @@ function isNotificationQuietHour(
   return current >= start || current < end;
 }
 
-function shouldBypassNotificationQuietHours(outbox = {}) {
-  return cleanDeliveryText(outbox.type, 80) === "admin_test_notification" ||
+function isAdminTestNotificationCandidate(outbox = {}) {
+  return cleanDeliveryText(outbox.type, 80) === ADMIN_TEST_NOTIFICATION_TYPE ||
+    outbox.testOnly === true ||
     outbox.preferencesSnapshot?.adminTestOnly === true;
 }
 
-function shouldBypassNotificationPreferenceSuppression(outbox = {}) {
-  return cleanDeliveryText(outbox.type, 80) === "admin_test_notification" ||
+function isSelfScopedAdminTestNotification(outbox = {}) {
+  return cleanDeliveryText(outbox.type, 80) === ADMIN_TEST_NOTIFICATION_TYPE &&
+    outbox.testOnly === true &&
+    cleanDeliveryText(outbox.targetScope, 40) === "self" &&
     outbox.preferencesSnapshot?.adminTestOnly === true;
+}
+
+function shouldBypassNotificationQuietHours(outbox = {}) {
+  return isSelfScopedAdminTestNotification(outbox);
+}
+
+function shouldBypassNotificationPreferenceSuppression(outbox = {}) {
+  return isSelfScopedAdminTestNotification(outbox);
+}
+
+function notificationDeliverySafetySuppression(outbox = {}) {
+  if (!isNotificationOutboxDeliverable(outbox)) return null;
+  if (isAdminTestNotificationCandidate(outbox) && !isSelfScopedAdminTestNotification(outbox)) {
+    return {
+      deliveryState: "suppressed",
+      deliverySuppressionReason: "admin-test-scope-invalid",
+    };
+  }
+  return null;
 }
 
 function minutesUntilQuietHourEnd(
@@ -201,9 +224,10 @@ function templateEnabledForDelivery(settings = {}, templateKey = "") {
 }
 
 function notificationDeliveryPreferenceSuppression(outbox = {}, settings = {}, preferences = {}) {
-  if (!isNotificationOutboxDeliverable(outbox) || shouldBypassNotificationPreferenceSuppression(outbox)) {
-    return null;
-  }
+  if (!isNotificationOutboxDeliverable(outbox)) return null;
+  const safetySuppression = notificationDeliverySafetySuppression(outbox);
+  if (safetySuppression) return safetySuppression;
+  if (shouldBypassNotificationPreferenceSuppression(outbox)) return null;
 
   const templateKey = cleanDeliveryText(outbox.templateKey, 80);
   if (!templateEnabledForDelivery(settings, templateKey)) {
@@ -317,9 +341,12 @@ function buildNotificationPushMessage(outbox, tokenDeliveries) {
     data: {
       type: pushDataValue(outbox.type, 48),
       templateKey: pushDataValue(outbox.templateKey, 80),
+      campaignId: pushDataValue(outbox.campaignId, 80),
       reservationId: pushDataValue(outbox.reservationId, 160),
       reservationCode: pushDataValue(outbox.reservationCode, 40),
       redemptionId: pushDataValue(outbox.redemptionId, 160),
+      targetScope: pushDataValue(outbox.targetScope, 40),
+      testOnly: outbox.testOnly === true ? "true" : "",
       dedupeKey: pushDataValue(outbox.dedupeKey, 220),
       source: "notification_outbox",
     },
@@ -481,6 +508,7 @@ module.exports = {
   isNotificationOutboxDeliverable,
   isNotificationSendingLeaseExpired,
   nextDeliveryLeaseExpiration,
+  notificationDeliverySafetySuppression,
   notificationDeliveryPreferenceSuppression,
   notificationQuietHoursDeferral,
   notificationTokenDeliveryFromSnap,

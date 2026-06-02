@@ -147,6 +147,7 @@ const {
   isNotificationQuietHoursDeferralActive,
   isNotificationSendingLeaseExpired,
   nextDeliveryLeaseExpiration,
+  notificationDeliverySafetySuppression,
   notificationDeliveryPreferenceSuppression,
   notificationQuietHoursDeferral,
   notificationTokenDeliveryFromSnap,
@@ -2538,6 +2539,25 @@ async function claimNotificationOutboxDelivery(docSnap, now = new Date(), notifi
     const outbox = freshSnap.data() || {};
     if (!isNotificationOutboxDeliverable(outbox)) return null;
     if (!isNotificationSendingLeaseExpired(outbox, now)) return null;
+    const serverNow = admin.firestore.FieldValue.serverTimestamp();
+    const safetySuppression = notificationDeliverySafetySuppression(outbox);
+    if (safetySuppression) {
+      tx.update(freshSnap.ref, {
+        ...deliverySuppressionUpdate({
+          suppression: safetySuppression,
+          timestamp: serverNow,
+        }),
+        attemptCount: Number.isFinite(outbox.attemptCount) ?
+          Math.max(0, Math.floor(outbox.attemptCount)) :
+          0,
+      });
+      return {
+        ref: freshSnap.ref,
+        state: "suppressed",
+        reason: safetySuppression.deliverySuppressionReason,
+        outbox,
+      };
+    }
     if (isNotificationQuietHoursDeferralActive(outbox, notificationSettings, now)) {
       return {
         ref: freshSnap.ref,
@@ -2550,7 +2570,6 @@ async function claimNotificationOutboxDelivery(docSnap, now = new Date(), notifi
     const previousAttemptCount = Number.isFinite(outbox.attemptCount) ?
       Math.max(0, Math.floor(outbox.attemptCount)) :
       0;
-    const serverNow = admin.firestore.FieldValue.serverTimestamp();
     if (previousAttemptCount >= MAX_DELIVERY_ATTEMPTS) {
       tx.update(freshSnap.ref, {
         deliveryState: "failed",
@@ -2649,6 +2668,9 @@ async function processNotificationOutboxDocument(docSnap, {
   if (!claimed) return {state: "skipped"};
   if (claimed.state === "deferred") {
     return {state: "deferred", reason: "quiet-hours"};
+  }
+  if (claimed.state === "suppressed") {
+    return {state: "suppressed", reason: claimed.reason || "delivery-suppressed"};
   }
 
   const serverNow = admin.firestore.FieldValue.serverTimestamp();

@@ -12,6 +12,7 @@ const {
   isNotificationOutboxDeliverable,
   isNotificationSendingLeaseExpired,
   nextDeliveryLeaseExpiration,
+  notificationDeliverySafetySuppression,
   notificationDeliveryPreferenceSuppression,
   notificationQuietHoursDeferral,
   notificationTokenDeliveryFromSnap,
@@ -65,11 +66,33 @@ test("buildNotificationPushMessage builds token-scoped booking payload", () => {
   });
   assert.equal(message.data.type, "booking_status");
   assert.equal(message.data.templateKey, "booking_accepted");
+  assert.equal(message.data.campaignId, "");
   assert.equal(message.data.reservationId, "reservation-1");
   assert.equal(message.data.redemptionId, "");
+  assert.equal(message.data.targetScope, "");
+  assert.equal(message.data.testOnly, "");
   assert.equal(message.data.source, "notification_outbox");
   assert.equal(message.android.priority, "high");
   assert.equal(message.apns.payload.aps.sound, "default");
+});
+
+test("buildNotificationPushMessage carries self-test campaign audit fields", () => {
+  const message = buildNotificationPushMessage(outbox({
+    type: "admin_test_notification",
+    templateKey: "campaign_draft",
+    campaignId: "summer-test",
+    testOnly: true,
+    targetScope: "self",
+    preferencesSnapshot: {adminTestOnly: true, campaignDraftTest: true},
+  }), [
+    {tokenId: "device-1", token: "fcm_token_1234567890", platform: "android"},
+  ]);
+
+  assert.equal(message.data.type, "admin_test_notification");
+  assert.equal(message.data.templateKey, "campaign_draft");
+  assert.equal(message.data.campaignId, "summer-test");
+  assert.equal(message.data.targetScope, "self");
+  assert.equal(message.data.testOnly, "true");
 });
 
 test("deliveryCompletionUpdate marks sent attempts and returns invalid token ids", () => {
@@ -254,11 +277,49 @@ test("notification delivery suppression re-checks current settings and preferenc
   );
   assert.equal(
     notificationDeliveryPreferenceSuppression(
-      outbox({type: "admin_test_notification", templateKey: "booking_accepted"}),
+      outbox({
+        type: "admin_test_notification",
+        templateKey: "booking_accepted",
+        testOnly: true,
+        targetScope: "self",
+        preferencesSnapshot: {adminTestOnly: true},
+      }),
       notificationSettings({bookingStatusEnabled: false}),
       notificationPreferences({bookingStatusEnabled: false}),
     ),
     null,
+  );
+});
+
+test("admin test notification bypass requires explicit self-test scope", () => {
+  const validSelfTest = outbox({
+    type: "admin_test_notification",
+    templateKey: "booking_accepted",
+    testOnly: true,
+    targetScope: "self",
+    preferencesSnapshot: {adminTestOnly: true},
+  });
+  const invalidCampaignTest = outbox({
+    type: "admin_test_notification",
+    templateKey: "campaign_draft",
+    campaignId: "summer-test",
+    testOnly: true,
+    targetScope: "marketing_opt_in_users",
+    preferencesSnapshot: {adminTestOnly: true, campaignDraftTest: true},
+  });
+
+  assert.equal(notificationDeliverySafetySuppression(validSelfTest), null);
+  assert.deepEqual(notificationDeliverySafetySuppression(invalidCampaignTest), {
+    deliveryState: "suppressed",
+    deliverySuppressionReason: "admin-test-scope-invalid",
+  });
+  assert.equal(
+    notificationDeliveryPreferenceSuppression(
+      invalidCampaignTest,
+      notificationSettings({bookingStatusEnabled: false}),
+      notificationPreferences({bookingStatusEnabled: false}),
+    ).deliverySuppressionReason,
+    "admin-test-scope-invalid",
   );
 });
 
@@ -335,10 +396,13 @@ test("quiet hours defer normal push delivery but allow admin self-tests", () => 
   assert.equal(shouldDeferNotificationForQuietHours(outbox(), settings, activeNow), false);
   assert.equal(shouldDeferNotificationForQuietHours(outbox({
     type: "admin_test_notification",
+    testOnly: true,
+    targetScope: "self",
+    preferencesSnapshot: {adminTestOnly: true},
   }), settings, quietNow), false);
   assert.equal(shouldDeferNotificationForQuietHours(outbox({
     preferencesSnapshot: {adminTestOnly: true},
-  }), settings, quietNow), false);
+  }), settings, quietNow), true);
   assert.equal(shouldDeferNotificationForQuietHours(outbox({
     channels: ["email"],
   }), settings, quietNow), false);
