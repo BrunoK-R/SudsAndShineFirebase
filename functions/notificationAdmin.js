@@ -112,6 +112,25 @@ const MAX_TEMPLATE_TITLE_LENGTH = 120;
 const MAX_TEMPLATE_BODY_LENGTH = 500;
 const TimeRegex = /^([01]\d|2[0-3]):([0-5]\d)$/;
 const TimeZoneRegex = /^[A-Za-z_]+(?:\/[A-Za-z0-9_+-]+)*$/;
+const NOTIFICATION_SETTINGS_UPDATE_FIELDS = [
+  "bookingStatusEnabled",
+  "appointmentReminderEnabled",
+  "loyaltyEnabled",
+  "adminPendingAlertEnabled",
+  "marketingEnabled",
+  "reminderLeadMinutes",
+  "quietHoursStart",
+  "quietHoursEnd",
+  "quietHoursTimeZone",
+  "templates",
+];
+const NOTIFICATION_TEMPLATE_UPDATE_FIELDS = [
+  "key",
+  "label",
+  "enabled",
+  "title",
+  "body",
+];
 
 function settingPayload(data) {
   if (!data || typeof data !== "object") return {};
@@ -159,6 +178,20 @@ function requiredText(value, fieldName, maxLength) {
     throw new HttpsError("invalid-argument", `${fieldName} is too long`);
   }
   return trimmed;
+}
+
+function assertKnownFields(value, allowedFields, subject) {
+  const unknownField = Object.keys(value).find((key) => !allowedFields.includes(key));
+  if (unknownField) {
+    throw new HttpsError("invalid-argument", `${subject} contains unsupported field ${unknownField}`);
+  }
+}
+
+function requiredBoolean(value, fieldName) {
+  if (typeof value !== "boolean") {
+    throw new HttpsError("invalid-argument", `${fieldName} must be a boolean`);
+  }
+  return value;
 }
 
 function parseInteger(value) {
@@ -247,6 +280,30 @@ function templatesByKey(templates) {
   return map;
 }
 
+function updateTemplatesByKey(templates) {
+  if (!Array.isArray(templates)) {
+    throw new HttpsError("invalid-argument", "Notification templates are required");
+  }
+
+  const map = new Map();
+  for (const template of templates) {
+    if (!template || typeof template !== "object" || Array.isArray(template)) {
+      throw new HttpsError("invalid-argument", "Notification template payload is invalid");
+    }
+
+    assertKnownFields(template, NOTIFICATION_TEMPLATE_UPDATE_FIELDS, "Notification template");
+    const key = String(template.key || "").trim();
+    if (!TEMPLATE_KEYS.includes(key)) {
+      throw new HttpsError("invalid-argument", "template key is invalid");
+    }
+    if (map.has(key)) {
+      throw new HttpsError("invalid-argument", `template ${key} is duplicated`);
+    }
+    map.set(key, template);
+  }
+  return map;
+}
+
 function buildTemplate(rawTemplate, key) {
   const fallback = templateFallback(key);
   return {
@@ -270,7 +327,7 @@ function validateTemplate(rawTemplate, key) {
   return {
     key,
     label: fallback.label,
-    enabled: rawTemplate.enabled !== false,
+    enabled: requiredBoolean(rawTemplate.enabled, `template ${key} enabled`),
     title: requiredText(rawTemplate.title, `template ${key} title`, MAX_TEMPLATE_TITLE_LENGTH),
     body: requiredText(rawTemplate.body, `template ${key} body`, MAX_TEMPLATE_BODY_LENGTH),
   };
@@ -305,7 +362,8 @@ function validateNotificationSettingsUpdateInput(data = {}) {
     throw new HttpsError("invalid-argument", "Notification settings payload is required");
   }
 
-  const rawTemplates = templatesByKey(data.templates);
+  assertKnownFields(data, NOTIFICATION_SETTINGS_UPDATE_FIELDS, "Notification settings payload");
+  const rawTemplates = updateTemplatesByKey(data.templates);
   const hasRequiredTemplates = TEMPLATE_KEYS.every((key) =>
     rawTemplates.has(key) || BACKWARD_COMPATIBLE_TEMPLATE_KEYS.has(key),
   );
@@ -314,11 +372,11 @@ function validateNotificationSettingsUpdateInput(data = {}) {
   }
 
   return {
-    bookingStatusEnabled: data.bookingStatusEnabled === true,
-    appointmentReminderEnabled: data.appointmentReminderEnabled === true,
-    loyaltyEnabled: data.loyaltyEnabled === true,
-    adminPendingAlertEnabled: data.adminPendingAlertEnabled === true,
-    marketingEnabled: data.marketingEnabled === true,
+    bookingStatusEnabled: requiredBoolean(data.bookingStatusEnabled, "bookingStatusEnabled"),
+    appointmentReminderEnabled: requiredBoolean(data.appointmentReminderEnabled, "appointmentReminderEnabled"),
+    loyaltyEnabled: requiredBoolean(data.loyaltyEnabled, "loyaltyEnabled"),
+    adminPendingAlertEnabled: requiredBoolean(data.adminPendingAlertEnabled, "adminPendingAlertEnabled"),
+    marketingEnabled: requiredBoolean(data.marketingEnabled, "marketingEnabled"),
     reminderLeadMinutes: requiredReminderLeadMinutes(data.reminderLeadMinutes),
     quietHoursStart: requiredQuietHour(data.quietHoursStart, "quietHoursStart"),
     quietHoursEnd: requiredQuietHour(data.quietHoursEnd, "quietHoursEnd"),

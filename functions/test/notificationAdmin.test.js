@@ -161,6 +161,22 @@ test("validateNotificationSettingsUpdateInput rejects unsafe settings", () => {
   assert.throws(
     () => validateNotificationSettingsUpdateInput({
       ...validPayload(),
+      unsupported: true,
+    }),
+    /unsupported field unsupported/,
+  );
+
+  assert.throws(
+    () => validateNotificationSettingsUpdateInput({
+      ...validPayload(),
+      bookingStatusEnabled: "true",
+    }),
+    /bookingStatusEnabled/,
+  );
+
+  assert.throws(
+    () => validateNotificationSettingsUpdateInput({
+      ...validPayload(),
       reminderLeadMinutes: 10,
     }),
     /reminderLeadMinutes/,
@@ -180,6 +196,42 @@ test("validateNotificationSettingsUpdateInput rejects unsafe settings", () => {
       quietHoursTimeZone: "../Europe/Lisbon",
     }),
     /quietHoursTimeZone/,
+  );
+
+  assert.throws(
+    () => validateNotificationSettingsUpdateInput({
+      ...validPayload(),
+      templates: validPayload().templates.map((template, index) =>
+        index === 0 ? {...template, analyticsLabel: "request"} : template),
+    }),
+    /unsupported field analyticsLabel/,
+  );
+
+  assert.throws(
+    () => validateNotificationSettingsUpdateInput({
+      ...validPayload(),
+      templates: validPayload().templates.map((template, index) =>
+        index === 0 ? {...template, key: "unknown_template"} : template),
+    }),
+    /template key/,
+  );
+
+  assert.throws(
+    () => validateNotificationSettingsUpdateInput({
+      ...validPayload(),
+      templates: validPayload().templates.map((template, index) =>
+        index === 1 ? {...template, key: "booking_request"} : template),
+    }),
+    /duplicated/,
+  );
+
+  assert.throws(
+    () => validateNotificationSettingsUpdateInput({
+      ...validPayload(),
+      templates: validPayload().templates.map((template, index) =>
+        index === 0 ? {...template, enabled: "true"} : template),
+    }),
+    /booking_request enabled/,
   );
 
   assert.throws(
