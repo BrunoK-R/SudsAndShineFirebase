@@ -29,6 +29,25 @@ service cloud.firestore {
       return value is string && value.size() >= minLen && value.size() <= maxLen;
     }
 
+    function isWebUrl(value, maxLen) {
+      return isShortString(value, 1, maxLen) && value.matches('^https?://\\S+$');
+    }
+
+    function isEmailAddress(value) {
+      return isShortString(value, 5, 320) &&
+        value.matches('^[^@\\s]+@[^@\\s]+\\.[^@\\s]+$');
+    }
+
+    function isMailtoUri(value) {
+      return isShortString(value, 8, 327) &&
+        value.matches('^mailto:[^@\\s]+@[^@\\s]+\\.[^@\\s]+$');
+    }
+
+    function isTelUri(value) {
+      return isShortString(value, 10, 32) &&
+        value.matches('^tel:\\+?[0-9]{6,20}$');
+    }
+
     function optionalStringField(key, maxLen) {
       return !request.resource.data.keys().hasAny([key]) ||
         (request.resource.data[key] is string && request.resource.data[key].size() <= maxLen);
@@ -561,15 +580,170 @@ service cloud.firestore {
         (docId == 'notification_settings' && isValidNotificationSettingsWrite());
     }
 
+    function isValidBusinessContactValue(value) {
+      return value is map &&
+        value.keys().hasOnly([
+          'phone',
+          'phoneUri',
+          'email',
+          'emailUri',
+          'whatsappUri',
+        ]) &&
+        value.keys().hasAll([
+          'phone',
+          'phoneUri',
+          'email',
+          'emailUri',
+          'whatsappUri',
+        ]) &&
+        isShortString(value.phone, 1, 60) &&
+        isTelUri(value.phoneUri) &&
+        isEmailAddress(value.email) &&
+        isMailtoUri(value.emailUri) &&
+        isWebUrl(value.whatsappUri, 1000);
+    }
+
+    function isValidBusinessAddressValue(value) {
+      return value is map &&
+        value.keys().hasOnly([
+          'line1',
+          'line2',
+          'mapsUri',
+        ]) &&
+        value.keys().hasAll([
+          'line1',
+          'line2',
+          'mapsUri',
+        ]) &&
+        isShortString(value.line1, 1, 160) &&
+        isShortString(value.line2, 1, 160) &&
+        isWebUrl(value.mapsUri, 1000);
+    }
+
+    function isValidBusinessOpeningHoursItem(value) {
+      return value is map &&
+        value.keys().hasOnly([
+          'dayLabel',
+          'hoursLabel',
+          'closed',
+        ]) &&
+        value.keys().hasAll([
+          'dayLabel',
+          'hoursLabel',
+          'closed',
+        ]) &&
+        isShortString(value.dayLabel, 1, 80) &&
+        isShortString(value.hoursLabel, 1, 80) &&
+        value.closed is bool;
+    }
+
+    function isValidBusinessOpeningHoursAt(values, index) {
+      return values.size() <= index || isValidBusinessOpeningHoursItem(values[index]);
+    }
+
+    function isValidBusinessOpeningHoursList(values) {
+      return values is list &&
+        values.size() >= 1 &&
+        values.size() <= 10 &&
+        isValidBusinessOpeningHoursAt(values, 0) &&
+        isValidBusinessOpeningHoursAt(values, 1) &&
+        isValidBusinessOpeningHoursAt(values, 2) &&
+        isValidBusinessOpeningHoursAt(values, 3) &&
+        isValidBusinessOpeningHoursAt(values, 4) &&
+        isValidBusinessOpeningHoursAt(values, 5) &&
+        isValidBusinessOpeningHoursAt(values, 6) &&
+        isValidBusinessOpeningHoursAt(values, 7) &&
+        isValidBusinessOpeningHoursAt(values, 8) &&
+        isValidBusinessOpeningHoursAt(values, 9);
+    }
+
+    function isValidBusinessSocialLink(value) {
+      return value is map &&
+        value.keys().hasOnly([
+          'label',
+          'uri',
+        ]) &&
+        value.keys().hasAll([
+          'label',
+          'uri',
+        ]) &&
+        isShortString(value.label, 1, 80) &&
+        isWebUrl(value.uri, 1000);
+    }
+
+    function isValidBusinessSocialLinkAt(values, index) {
+      return values.size() <= index || isValidBusinessSocialLink(values[index]);
+    }
+
+    function isValidBusinessSocialLinkList(values) {
+      return values is list &&
+        values.size() <= 8 &&
+        isValidBusinessSocialLinkAt(values, 0) &&
+        isValidBusinessSocialLinkAt(values, 1) &&
+        isValidBusinessSocialLinkAt(values, 2) &&
+        isValidBusinessSocialLinkAt(values, 3) &&
+        isValidBusinessSocialLinkAt(values, 4) &&
+        isValidBusinessSocialLinkAt(values, 5) &&
+        isValidBusinessSocialLinkAt(values, 6) &&
+        isValidBusinessSocialLinkAt(values, 7);
+    }
+
+    function isValidBusinessInfoValue(value) {
+      return value is map &&
+        value.keys().hasOnly([
+          'contact',
+          'address',
+          'openingHours',
+          'socialLinks',
+        ]) &&
+        value.keys().hasAll([
+          'contact',
+          'address',
+          'openingHours',
+          'socialLinks',
+        ]) &&
+        isValidBusinessContactValue(value.contact) &&
+        isValidBusinessAddressValue(value.address) &&
+        isValidBusinessOpeningHoursList(value.openingHours) &&
+        isValidBusinessSocialLinkList(value.socialLinks);
+    }
+
+    function isValidBusinessInfoWrite() {
+      return request.resource != null &&
+        request.resource.data.keys().hasOnly([
+          'key',
+          'value',
+          'updatedAt',
+          'updatedByUid',
+          'updateSource',
+        ]) &&
+        request.resource.data.key == 'business_info' &&
+        isValidBusinessInfoValue(request.resource.data.value) &&
+        request.resource.data.updatedAt is timestamp &&
+        request.resource.data.updatedByUid == request.auth.uid &&
+        request.resource.data.updateSource == 'admin-mobile-business-info';
+    }
+
     function isValidBusinessSettingsWrite(docId) {
-      return (docId == 'booking_policy' && isValidBookingPolicyWrite()) ||
+      return (docId == 'business_info' && isValidBusinessInfoWrite()) ||
+        (docId == 'booking_policy' && isValidBookingPolicyWrite()) ||
         (docId in ['default_max_bookings_per_slot', 'default_slot_interval_minutes'] &&
           isValidAvailabilitySettingWrite(docId)) ||
         !(docId in [
+          'business_info',
           'booking_policy',
           'default_max_bookings_per_slot',
           'default_slot_interval_minutes',
         ]);
+    }
+
+    function isProtectedBusinessSettingDoc(docId) {
+      return docId in [
+        'business_info',
+        'booking_policy',
+        'default_max_bookings_per_slot',
+        'default_slot_interval_minutes',
+      ];
     }
 
     function isValidActiveCapacityOverrideWrite(docId) {
@@ -750,7 +924,7 @@ service cloud.firestore {
     match /business_settings/{docId} {
       allow read: if true;
       allow create, update: if isAdmin() && isValidBusinessSettingsWrite(docId);
-      allow delete: if isAdmin() && docId != 'booking_policy';
+      allow delete: if isAdmin() && !isProtectedBusinessSettingDoc(docId);
     }
 
     match /admin_settings/{docId} {

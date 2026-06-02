@@ -1601,7 +1601,7 @@ exports.updateBusinessInfo = onCall(async (request) => {
       value,
       updatedAt: admin.firestore.FieldValue.serverTimestamp(),
       updatedByUid: request.auth.uid,
-      updateSource: "admin-mobile",
+      updateSource: "admin-mobile-business-info",
     },
     {merge: true},
   );

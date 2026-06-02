@@ -92,6 +92,36 @@ function validAvailabilitySettingPayload(docId, value, now = Timestamp.fromDate(
   };
 }
 
+function validBusinessInfoPayload(now = Timestamp.fromDate(new Date())) {
+  return {
+    key: 'business_info',
+    value: {
+      contact: {
+        phone: '+351 913 005 855',
+        phoneUri: 'tel:+351913005855',
+        email: 'info@sudsshine.pt',
+        emailUri: 'mailto:info@sudsshine.pt',
+        whatsappUri: 'https://wa.me/351913005855',
+      },
+      address: {
+        line1: 'Shopping Norte Sul, Piso -1',
+        line2: 'Leiria, Portugal',
+        mapsUri: 'https://maps.example.test/suds',
+      },
+      openingHours: [
+        {dayLabel: 'Segunda a Sexta', hoursLabel: '09:00 - 19:00', closed: false},
+        {dayLabel: 'Domingo', hoursLabel: 'Encerrado', closed: true},
+      ],
+      socialLinks: [
+        {label: 'Instagram', uri: 'https://instagram.com/sudsshine'},
+      ],
+    },
+    updatedAt: now,
+    updatedByUid: 'admin-1',
+    updateSource: 'admin-mobile-business-info',
+  };
+}
+
 function validBlockedSlotPayload(now = Timestamp.fromDate(new Date())) {
   return {
     blockedSlotId: 'b-2',
@@ -354,6 +384,66 @@ test('business settings can only be written by admin', async () => {
   }));
 });
 
+test('business info business setting requires admin audit and safe shape', async () => {
+  const now = Timestamp.fromDate(new Date());
+  const validInfo = validBusinessInfoPayload(now);
+
+  await assertSucceeds(setDoc(doc(adminDb(), 'business_settings', 'business_info'), validInfo));
+  await assertFails(setDoc(doc(staffDb(), 'business_settings', 'business_info'), validInfo));
+  await assertFails(setDoc(doc(adminDb(), 'business_settings', 'business_info'), {
+    ...validInfo,
+    value: {
+      ...validInfo.value,
+      address: {
+        ...validInfo.value.address,
+        mapsUri: 'javascript:alert(1)',
+      },
+    },
+  }));
+  await assertFails(setDoc(doc(adminDb(), 'business_settings', 'business_info'), {
+    ...validInfo,
+    value: {
+      ...validInfo.value,
+      openingHours: [],
+    },
+  }));
+  await assertFails(setDoc(doc(adminDb(), 'business_settings', 'business_info'), {
+    ...validInfo,
+    value: {
+      ...validInfo.value,
+      socialLinks: [
+        {label: 'Unsafe', uri: 'javascript:alert(1)'},
+      ],
+    },
+  }));
+  await assertFails(setDoc(doc(adminDb(), 'business_settings', 'business_info'), {
+    ...validInfo,
+    updatedByUid: 'other-admin',
+  }));
+  await assertFails(setDoc(doc(adminDb(), 'business_settings', 'business_info'), {
+    ...validInfo,
+    updateSource: 'admin-mobile',
+  }));
+  await assertFails(setDoc(doc(adminDb(), 'business_settings', 'business_info'), {
+    ...validInfo,
+    internalNote: 'not allowed',
+  }));
+  await assertSucceeds(updateDoc(doc(adminDb(), 'business_settings', 'business_info'), {
+    value: {
+      ...validInfo.value,
+      contact: {
+        ...validInfo.value.contact,
+        phone: '244 000 222',
+        phoneUri: 'tel:244000222',
+      },
+    },
+    updatedAt: now,
+    updatedByUid: 'admin-1',
+    updateSource: 'admin-mobile-business-info',
+  }));
+  await assertFails(deleteDoc(doc(adminDb(), 'business_settings', 'business_info')));
+});
+
 test('booking policy business setting requires admin audit and safe shape', async () => {
   const now = Timestamp.fromDate(new Date());
   const validPolicy = validBookingPolicyPayload(now);
@@ -419,6 +509,8 @@ test('availability business settings require admin audit and safe shape', async 
     ...validSlotInterval,
     internalNote: 'not allowed',
   }));
+  await assertFails(deleteDoc(doc(adminDb(), 'business_settings', 'default_max_bookings_per_slot')));
+  await assertFails(deleteDoc(doc(adminDb(), 'business_settings', 'default_slot_interval_minutes')));
 });
 
 test('admin settings are hidden from non-admin direct clients', async () => {
