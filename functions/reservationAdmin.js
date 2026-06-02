@@ -106,6 +106,17 @@ function priceCentsForReservation(data, servicesById) {
   return servicePriceCents + extrasPriceCentsForReservation(data);
 }
 
+function reservationDecisionAudit(data) {
+  return {
+    acceptedAt: timestampToIso(data.acceptedAt),
+    acceptedByUid: String(data.acceptedByUid || "").trim(),
+    rejectedAt: timestampToIso(data.rejectedAt),
+    rejectedByUid: String(data.rejectedByUid || "").trim(),
+    completedAt: timestampToIso(data.completedAt),
+    completedByUid: String(data.completedByUid || "").trim(),
+  };
+}
+
 function normalizeAdminPendingReservationDocument(doc, servicesById, now = new Date()) {
   if (!doc?.exists) return null;
 
@@ -144,6 +155,7 @@ function normalizeAdminPendingReservationDocument(doc, servicesById, now = new D
     createdAt: timestampToIso(data.createdAt),
     pendingExpiresAt: timestampToIso(data.pendingExpiresAt),
     loyaltyRewardApplied: data.loyaltyRewardApplied === true,
+    ...reservationDecisionAudit(data),
   };
 }
 
@@ -189,6 +201,7 @@ function normalizeAdminCompletableReservationDocument(doc, servicesById, now = n
     createdAt: timestampToIso(data.createdAt),
     pendingExpiresAt: timestampToIso(data.pendingExpiresAt),
     loyaltyRewardApplied: data.loyaltyRewardApplied === true,
+    ...reservationDecisionAudit(data),
   };
 }
 

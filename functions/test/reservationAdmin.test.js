@@ -124,6 +124,8 @@ test("buildAdminCompletableReservations returns past confirmed jobs sorted by sl
         status: "in_progress",
         vehicleType: "suv",
         extras: [{id: "wax", name: "Enceramento", priceCents: 1500}],
+        acceptedAt: "2026-05-19T18:30:00.000Z",
+        acceptedByUid: " admin-uid ",
       }),
       doc("earlier", {
         reservationCode: "SS-EARLIER",
@@ -148,6 +150,8 @@ test("buildAdminCompletableReservations returns past confirmed jobs sorted by sl
   assert.equal(requests[0].status, "confirmed");
   assert.equal(requests[1].status, "in_progress");
   assert.equal(requests[1].priceCents, 4900);
+  assert.equal(requests[1].acceptedAt, "2026-05-19T18:30:00.000Z");
+  assert.equal(requests[1].acceptedByUid, "admin-uid");
 });
 
 test("assertPendingReservationActionable rejects expired and non-pending requests", () => {
