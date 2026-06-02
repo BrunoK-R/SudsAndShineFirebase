@@ -542,6 +542,8 @@ test("buildAdminTestNotificationOutboxDocument queues current-admin test without
   assert.equal(payload.recipientUid, "admin-1");
   assert.equal(payload.title, "Teste TESTE");
   assert.equal(payload.body, "Cliente de teste pediu Lavagem completa para 2026-06-01 10:00.");
+  assert.equal(payload.testOnly, true);
+  assert.equal(payload.targetScope, "self");
   assert.equal(payload.notificationCreatedByUid, "admin-1");
   assert.equal(payload.preferencesSnapshot.adminTestOnly, true);
   assert.equal(Object.hasOwn(payload, "token"), false);
@@ -568,6 +570,8 @@ test("buildAdminCampaignDraftTestNotificationOutboxDocument queues campaign prev
   assert.equal(payload.recipientUid, "admin-1");
   assert.equal(payload.title, "Oferta de teste");
   assert.equal(payload.body, "Mensagem segura para preview.");
+  assert.equal(payload.testOnly, true);
+  assert.equal(payload.targetScope, "self");
   assert.equal(payload.campaignSnapshot.targetAudience, "marketing_opt_in_users");
   assert.equal(payload.preferencesSnapshot.adminTestOnly, true);
   assert.equal(payload.preferencesSnapshot.campaignDraftTest, true);

@@ -1732,7 +1732,9 @@ exports.sendAdminNotificationTest = onCall(async (request) => {
     campaignId: notification.campaignId || "",
     deliveryState: notification.deliveryState,
     recipientUid,
-    message: "Test notification queued for the current admin user",
+    targetScope: notification.targetScope || "self",
+    testOnly: notification.testOnly === true || notification.preferencesSnapshot?.adminTestOnly === true,
+    message: "Test notification queued for the current admin user only",
   };
 });
 
