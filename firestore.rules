@@ -59,6 +59,21 @@ service cloud.firestore {
         request.resource.data[key] == docId;
     }
 
+    function isNotificationTokenDocId(tokenDocId) {
+      return tokenDocId.matches('^[A-Za-z0-9_-]{8,128}$');
+    }
+
+    function isNotificationTokenValue(value) {
+      return value is string &&
+        value.size() >= 10 &&
+        value.size() <= 4096 &&
+        value.matches('^\\S+$');
+    }
+
+    function isNotificationTokenPlatform(value) {
+      return value in ['android', 'ios', 'web'];
+    }
+
     function isValidPublicReservationCreate() {
       return request.resource.data.keys().hasOnly([
           'reservationCode',
@@ -156,11 +171,12 @@ service cloud.firestore {
           'revokedAt',
           'updateSource',
         ]) &&
-        optionalOwnerField(userId) &&
-        optionalStringField('tokenId', 128) &&
-        optionalDocumentIdField('tokenId', tokenDocId) &&
-        optionalStringField('token', 4096) &&
-        optionalStringField('platform', 20) &&
+        request.resource.data.keys().hasAll(['ownerUid', 'tokenId', 'token', 'platform', 'enabled']) &&
+        isNotificationTokenDocId(tokenDocId) &&
+        request.resource.data.ownerUid == userId &&
+        request.resource.data.tokenId == tokenDocId &&
+        isNotificationTokenValue(request.resource.data.token) &&
+        isNotificationTokenPlatform(request.resource.data.platform) &&
         optionalBoolField('enabled') &&
         optionalStringField('deviceLabel', 120) &&
         optionalStringField('appVersion', 64) &&

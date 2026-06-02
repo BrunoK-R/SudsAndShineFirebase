@@ -317,9 +317,9 @@ test('users can only manage their own notification preferences and tokens', asyn
   await assertSucceeds(getDoc(doc(userDb('user-1'), 'users', 'user-1', 'notification_tokens', 'current-test-device')));
   await assertFails(getDoc(doc(userDb('user-2'), 'users', 'user-1', 'notification_tokens', 'current-test-device')));
   await assertFails(getDoc(doc(staffDb(), 'users', 'user-1', 'notification_tokens', 'current-test-device')));
-  await assertFails(setDoc(doc(userDb('user-2'), 'users', 'user-1', 'notification_tokens', 'token-2'), {
+  await assertFails(setDoc(doc(userDb('user-2'), 'users', 'user-1', 'notification_tokens', 'token-22'), {
     ownerUid: 'user-1',
-    tokenId: 'token-2',
+    tokenId: 'token-22',
     platform: 'android',
     token: 'test-token-for-current-device-2222222222',
     enabled: true,
@@ -335,7 +335,7 @@ test('users can only manage their own notification preferences and tokens', asyn
     createdAt: now,
     updatedAt: now,
   }));
-  await assertFails(setDoc(doc(userDb('user-1'), 'users', 'user-1', 'notification_tokens', 'token-2'), {
+  await assertFails(setDoc(doc(userDb('user-1'), 'users', 'user-1', 'notification_tokens', 'token-22'), {
     ownerUid: 'user-1',
     tokenId: 'other-token',
     platform: 'ios',
@@ -344,16 +344,51 @@ test('users can only manage their own notification preferences and tokens', asyn
     createdAt: now,
     updatedAt: now,
   }));
-  await assertSucceeds(setDoc(doc(userDb('user-1'), 'users', 'user-1', 'notification_tokens', 'token-2'), {
+  await assertFails(setDoc(doc(userDb('user-1'), 'users', 'user-1', 'notification_tokens', 'short'), {
     ownerUid: 'user-1',
-    tokenId: 'token-2',
+    tokenId: 'short',
     platform: 'ios',
     token: 'test-token-for-current-device-2222222222',
     enabled: true,
     createdAt: now,
     updatedAt: now,
   }));
-  await assertSucceeds(deleteDoc(doc(userDb('user-1'), 'users', 'user-1', 'notification_tokens', 'token-2')));
+  await assertFails(setDoc(doc(userDb('user-1'), 'users', 'user-1', 'notification_tokens', 'token-22'), {
+    ownerUid: 'user-1',
+    tokenId: 'token-22',
+    platform: 'sms',
+    token: 'test-token-for-current-device-2222222222',
+    enabled: true,
+    createdAt: now,
+    updatedAt: now,
+  }));
+  await assertFails(setDoc(doc(userDb('user-1'), 'users', 'user-1', 'notification_tokens', 'token-22'), {
+    ownerUid: 'user-1',
+    tokenId: 'token-22',
+    platform: 'ios',
+    token: 'test token with spaces',
+    enabled: true,
+    createdAt: now,
+    updatedAt: now,
+  }));
+  await assertFails(setDoc(doc(userDb('user-1'), 'users', 'user-1', 'notification_tokens', 'token-22'), {
+    tokenId: 'token-22',
+    platform: 'ios',
+    token: 'test-token-for-current-device-2222222222',
+    enabled: true,
+    createdAt: now,
+    updatedAt: now,
+  }));
+  await assertSucceeds(setDoc(doc(userDb('user-1'), 'users', 'user-1', 'notification_tokens', 'token-22'), {
+    ownerUid: 'user-1',
+    tokenId: 'token-22',
+    platform: 'ios',
+    token: 'test-token-for-current-device-2222222222',
+    enabled: true,
+    createdAt: now,
+    updatedAt: now,
+  }));
+  await assertSucceeds(deleteDoc(doc(userDb('user-1'), 'users', 'user-1', 'notification_tokens', 'token-22')));
 });
 
 test('notification outbox is hidden from all direct clients', async () => {
