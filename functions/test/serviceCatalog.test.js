@@ -261,6 +261,12 @@ test("buildAdminServiceExtras includes inactive extras with admin metadata", () 
     serviceIds: ["premium", "standard"],
     enabled: false,
     sortOrder: "3",
+    createdAt: new Date("2026-06-01T10:00:00.000Z"),
+    updatedAt: {toDate: () => new Date("2026-06-01T11:30:00.500Z")},
+    archivedAt: "2026-06-01T12:45:00.000Z",
+    createdByUid: " admin-create ",
+    updatedByUid: " admin-update ",
+    archivedByUid: " admin-archive ",
   });
 
   assert.equal(inactive.id, "wax");
@@ -268,6 +274,12 @@ test("buildAdminServiceExtras includes inactive extras with admin metadata", () 
   assert.equal(inactive.priceCents, 1500);
   assert.equal(inactive.active, false);
   assert.deepEqual(inactive.eligibleServiceIds, ["premium", "standard"]);
+  assert.equal(inactive.createdAtIso, "2026-06-01T10:00:00.000Z");
+  assert.equal(inactive.updatedAtIso, "2026-06-01T11:30:00.500Z");
+  assert.equal(inactive.archivedAtIso, "2026-06-01T12:45:00.000Z");
+  assert.equal(inactive.createdByUid, "admin-create");
+  assert.equal(inactive.updatedByUid, "admin-update");
+  assert.equal(inactive.archivedByUid, "admin-archive");
 
   const catalog = buildAdminServiceExtras([
     doc("odor", {
@@ -275,6 +287,8 @@ test("buildAdminServiceExtras includes inactive extras with admin metadata", () 
       priceCents: 1200,
       enabled: true,
       sortOrder: 2,
+      updatedAt: {seconds: 1780312800, nanoseconds: 250000000},
+      updatedByUid: "admin-seconds",
     }),
     doc("wax", {
       name: "Enceramento",
@@ -288,6 +302,8 @@ test("buildAdminServiceExtras includes inactive extras with admin metadata", () 
   assert.deepEqual(catalog.extras.map((extra) => extra.id), ["wax", "odor"]);
   assert.equal(catalog.extras[0].active, false);
   assert.equal(catalog.extras[0].sortOrder, 1);
+  assert.equal(catalog.extras[1].updatedAtIso, "2026-06-01T11:20:00.250Z");
+  assert.equal(catalog.extras[1].updatedByUid, "admin-seconds");
 });
 
 test("buildAdminServiceExtras falls back to default active extras", () => {

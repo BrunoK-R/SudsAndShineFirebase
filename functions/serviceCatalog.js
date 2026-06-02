@@ -240,6 +240,12 @@ function normalizeAdminExtraDocument(docId, data) {
     eligibleServiceIds: normalizePublicEligibleServiceIds(data.eligibleServiceIds || data.serviceIds),
     active,
     sortOrder: Number.isFinite(Number(data.sortOrder)) ? Number(data.sortOrder) : 999,
+    createdAtIso: timestampToIso(data.createdAt),
+    updatedAtIso: timestampToIso(data.updatedAt),
+    archivedAtIso: timestampToIso(data.archivedAt),
+    createdByUid: String(data.createdByUid || "").trim(),
+    updatedByUid: String(data.updatedByUid || "").trim(),
+    archivedByUid: String(data.archivedByUid || "").trim(),
   };
 }
 
