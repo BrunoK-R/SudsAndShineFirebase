@@ -108,6 +108,23 @@ test("assertReservationReviewable rejects foreign future and cancelled reservati
   }, /Cancelled reservations cannot be reviewed/);
 });
 
+test("assertReservationReviewable rejects closed non-reviewable statuses", () => {
+  for (const status of ["rejected", "rejeitado", "expired", "expirado"]) {
+    assert.throws(() => {
+      assertReservationReviewable({
+        reservationSnap: doc({
+          customerUid: "uid-1",
+          slotEnd: "2026-05-19T10:45:00.000Z",
+          status,
+        }),
+        uid: "uid-1",
+        email: "bruno@example.com",
+        now: new Date("2026-05-20T10:00:00.000Z"),
+      });
+    }, /Reservation is not ready for review/);
+  }
+});
+
 test("buildReservationReviewDocument keeps review data user scoped", () => {
   const review = validateReservationReviewInput({
     reservationId: "reservation-1",

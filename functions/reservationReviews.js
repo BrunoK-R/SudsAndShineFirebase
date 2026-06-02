@@ -53,6 +53,15 @@ function isCancelledStatus(status) {
   return ["cancelled", "canceled", "cancelado"].includes(String(status || "").toLowerCase());
 }
 
+function isClosedNonReviewableStatus(status) {
+  return [
+    "rejected",
+    "rejeitado",
+    "expired",
+    "expirado",
+  ].includes(String(status || "").toLowerCase());
+}
+
 function isReservationOwnedByRequester(data, uid, email) {
   const customerUid = String(data.customerUid || "").trim();
   const customerEmail = String(data.customerEmail || "").trim().toLowerCase();
@@ -71,6 +80,9 @@ function assertReservationReviewable({reservationSnap, uid, email, now = new Dat
 
   if (isCancelledStatus(data.status)) {
     throw new HttpsError("failed-precondition", "Cancelled reservations cannot be reviewed");
+  }
+  if (isClosedNonReviewableStatus(data.status)) {
+    throw new HttpsError("failed-precondition", "Reservation is not ready for review");
   }
 
   const slotEnd = new Date(data.slotEnd || data.end_time || data.endTime || "");
