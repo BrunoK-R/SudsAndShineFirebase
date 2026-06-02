@@ -140,8 +140,30 @@ function settingPayload(data) {
   return nested || data;
 }
 
+function timestampToIso(value) {
+  if (!value) return "";
+  if (typeof value === "string") {
+    const parsed = new Date(value);
+    return Number.isNaN(parsed.getTime()) ? "" : parsed.toISOString();
+  }
+  if (value instanceof Date) {
+    return Number.isNaN(value.getTime()) ? "" : value.toISOString();
+  }
+  if (typeof value.toDate === "function") {
+    const parsed = value.toDate();
+    return parsed instanceof Date && !Number.isNaN(parsed.getTime()) ? parsed.toISOString() : "";
+  }
+  if (Number.isFinite(value.seconds)) {
+    const nanoseconds = Number.isFinite(value.nanoseconds) ? value.nanoseconds : 0;
+    const parsed = new Date(value.seconds * 1000 + Math.floor(nanoseconds / 1000000));
+    return Number.isNaN(parsed.getTime()) ? "" : parsed.toISOString();
+  }
+  return "";
+}
+
 function buildBusinessInfo(docSnap = null) {
-  const source = docSnap?.exists ? settingPayload(docSnap.data()) : {};
+  const root = docSnap?.exists ? docSnap.data() : docSnap;
+  const source = settingPayload(root);
   const address = source.address && typeof source.address === "object" ? source.address : {};
   const contact = source.contact && typeof source.contact === "object" ? source.contact : {};
 
@@ -167,6 +189,8 @@ function buildBusinessInfo(docSnap = null) {
     stats: normalizeStats(source.stats),
     socialLinks: normalizeSocialLinks(source.socialLinks),
     source: docSnap?.exists ? "firestore" : "default",
+    updatedAtIso: timestampToIso(root?.updatedAt || source.updatedAt),
+    updatedByUid: shortString(root?.updatedByUid || source.updatedByUid, "", 128),
   };
 }
 

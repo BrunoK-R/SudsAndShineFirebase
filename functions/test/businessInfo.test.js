@@ -32,6 +32,8 @@ test("buildBusinessInfo normalizes nested business setting value", () => {
   const info = buildBusinessInfo(
     doc({
       key: "business_info",
+      updatedAt: new Date("2026-06-01T10:15:00.000Z"),
+      updatedByUid: " admin-updated ",
       value: {
         contact: {
           phone: " 244 000 111 ",
@@ -75,6 +77,28 @@ test("buildBusinessInfo normalizes nested business setting value", () => {
   assert.deepEqual(info.faq, [{question: "Pergunta?", answer: "Resposta."}]);
   assert.deepEqual(info.stats, [{value: "900+", label: "Clientes"}]);
   assert.deepEqual(info.socialLinks, [{label: "Instagram", uri: "https://instagram.com/sudsshine"}]);
+  assert.equal(info.updatedAtIso, "2026-06-01T10:15:00.000Z");
+  assert.equal(info.updatedByUid, "admin-updated");
+});
+
+test("buildBusinessInfo normalizes timestamp-like audit metadata", () => {
+  const fromTimestamp = buildBusinessInfo(doc({
+    updatedAt: {seconds: 1780309800, nanoseconds: 500000000},
+    updatedByUid: "admin-ts",
+    value: DEFAULT_BUSINESS_INFO,
+  }));
+  const fromString = buildBusinessInfo(doc({
+    value: {
+      ...DEFAULT_BUSINESS_INFO,
+      updatedAt: "2026-06-01T12:45:00.000Z",
+      updatedByUid: "admin-string",
+    },
+  }));
+
+  assert.equal(fromTimestamp.updatedAtIso, "2026-06-01T10:30:00.500Z");
+  assert.equal(fromTimestamp.updatedByUid, "admin-ts");
+  assert.equal(fromString.updatedAtIso, "2026-06-01T12:45:00.000Z");
+  assert.equal(fromString.updatedByUid, "admin-string");
 });
 
 test("normalizers fall back when lists contain no usable records", () => {

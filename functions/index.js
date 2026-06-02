@@ -1567,6 +1567,7 @@ exports.updateBusinessInfo = onCall(async (request) => {
   await assertAdminRequest(request);
   const businessInfo = validateBusinessInfoUpdateInput(request.data);
   const value = buildBusinessInfoSettingValue(businessInfo);
+  const updatedAt = new Date();
 
   await db.collection("business_settings").doc("business_info").set(
     {
@@ -1582,6 +1583,8 @@ exports.updateBusinessInfo = onCall(async (request) => {
   return {
     ...businessInfo,
     source: "firestore",
+    updatedAtIso: updatedAt.toISOString(),
+    updatedByUid: request.auth.uid,
   };
 });
 
