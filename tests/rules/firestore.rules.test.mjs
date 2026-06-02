@@ -67,6 +67,21 @@ function validReservationPayload() {
   };
 }
 
+function validBookingPolicyPayload(now = Timestamp.fromDate(new Date())) {
+  return {
+    key: 'booking_policy',
+    value: {
+      pendingHoldMinutes: 1440,
+      cancellationWindowMinutes: 120,
+      rescheduleWindowMinutes: 120,
+      paymentEligibilityCopy: 'Pagamento confirmado no local após validação.',
+    },
+    updatedAt: now,
+    updatedByUid: 'admin-1',
+    updateSource: 'admin-mobile-booking-policy',
+  };
+}
+
 test.before(async () => {
   testEnv = await initializeTestEnvironment({
     projectId: PROJECT_ID,
@@ -124,6 +139,43 @@ test('business settings can only be written by admin', async () => {
   await assertFails(setDoc(doc(staffDb(), 'business_settings', 'hours'), {
     weekdayStart: '00:00',
   }));
+});
+
+test('booking policy business setting requires admin audit and safe shape', async () => {
+  const now = Timestamp.fromDate(new Date());
+  const validPolicy = validBookingPolicyPayload(now);
+
+  await assertSucceeds(setDoc(doc(adminDb(), 'business_settings', 'booking_policy'), validPolicy));
+  await assertFails(setDoc(doc(staffDb(), 'business_settings', 'booking_policy'), validPolicy));
+  await assertFails(setDoc(doc(adminDb(), 'business_settings', 'booking_policy'), {
+    ...validPolicy,
+    value: {
+      ...validPolicy.value,
+      pendingHoldMinutes: 5,
+    },
+  }));
+  await assertFails(setDoc(doc(adminDb(), 'business_settings', 'booking_policy'), {
+    ...validPolicy,
+    updatedByUid: 'other-admin',
+  }));
+  await assertFails(setDoc(doc(adminDb(), 'business_settings', 'booking_policy'), {
+    ...validPolicy,
+    updateSource: 'console',
+  }));
+  await assertFails(setDoc(doc(adminDb(), 'business_settings', 'booking_policy'), {
+    ...validPolicy,
+    internalNote: 'not allowed',
+  }));
+  await assertSucceeds(updateDoc(doc(adminDb(), 'business_settings', 'booking_policy'), {
+    value: {
+      ...validPolicy.value,
+      pendingHoldMinutes: 2880,
+    },
+    updatedAt: now,
+    updatedByUid: 'admin-1',
+    updateSource: 'admin-mobile-booking-policy',
+  }));
+  await assertFails(deleteDoc(doc(adminDb(), 'business_settings', 'booking_policy')));
 });
 
 test('admin settings are hidden from non-admin direct clients', async () => {

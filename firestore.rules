@@ -171,6 +171,50 @@ service cloud.firestore {
         optionalStringField('updateSource', 80);
     }
 
+    function isIntegerInRange(value, minValue, maxValue) {
+      return value is int && value >= minValue && value <= maxValue;
+    }
+
+    function isValidBookingPolicyValue(value) {
+      return value is map &&
+        value.keys().hasOnly([
+          'pendingHoldMinutes',
+          'cancellationWindowMinutes',
+          'rescheduleWindowMinutes',
+          'paymentEligibilityCopy',
+        ]) &&
+        value.keys().hasAll([
+          'pendingHoldMinutes',
+          'cancellationWindowMinutes',
+          'rescheduleWindowMinutes',
+          'paymentEligibilityCopy',
+        ]) &&
+        isIntegerInRange(value.pendingHoldMinutes, 15, 10080) &&
+        isIntegerInRange(value.cancellationWindowMinutes, 0, 10080) &&
+        isIntegerInRange(value.rescheduleWindowMinutes, 0, 10080) &&
+        isShortString(value.paymentEligibilityCopy, 1, 500);
+    }
+
+    function isValidBookingPolicyWrite() {
+      return request.resource != null &&
+        request.resource.data.keys().hasOnly([
+          'key',
+          'value',
+          'updatedAt',
+          'updatedByUid',
+          'updateSource',
+        ]) &&
+        request.resource.data.key == 'booking_policy' &&
+        isValidBookingPolicyValue(request.resource.data.value) &&
+        request.resource.data.updatedAt is timestamp &&
+        request.resource.data.updatedByUid == request.auth.uid &&
+        request.resource.data.updateSource == 'admin-mobile-booking-policy';
+    }
+
+    function isValidBusinessSettingsWrite(docId) {
+      return docId != 'booking_policy' || isValidBookingPolicyWrite();
+    }
+
     match /admin_allowlist/{docId} {
       allow read, write: if isAdmin();
     }
@@ -191,7 +235,8 @@ service cloud.firestore {
 
     match /business_settings/{docId} {
       allow read: if true;
-      allow write: if isAdmin();
+      allow create, update: if isAdmin() && isValidBusinessSettingsWrite(docId);
+      allow delete: if isAdmin() && docId != 'booking_policy';
     }
 
     match /admin_settings/{docId} {
