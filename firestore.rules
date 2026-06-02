@@ -191,6 +191,60 @@ service cloud.firestore {
       return value is int && value >= minValue && value <= maxValue;
     }
 
+    function isDateKey(value) {
+      return value is string && value.matches('^\\d{4}-\\d{2}-\\d{2}$');
+    }
+
+    function isIsoInstant(value) {
+      return value is string &&
+        value.matches('^\\d{4}-\\d{2}-\\d{2}T\\d{2}:\\d{2}:\\d{2}\\.\\d{3}Z$');
+    }
+
+    function isIsoInstantForDate(value, dateKey) {
+      return isIsoInstant(value) &&
+        value >= dateKey + 'T00:00:00.000Z' &&
+        value <= dateKey + 'T23:59:59.999Z';
+    }
+
+    function optionalDateKeyField(key) {
+      return !request.resource.data.keys().hasAny([key]) ||
+        isDateKey(request.resource.data[key]);
+    }
+
+    function optionalIsoInstantField(key) {
+      return !request.resource.data.keys().hasAny([key]) ||
+        isIsoInstant(request.resource.data[key]);
+    }
+
+    function isAvailabilityAuditWrite(updateSource) {
+      return request.resource.data.updatedAt is timestamp &&
+        request.resource.data.updatedByUid == request.auth.uid &&
+        request.resource.data.updateSource == updateSource;
+    }
+
+    function isAvailabilityAdminDocId(docId) {
+      return docId.matches('^[A-Za-z0-9_-]{1,120}$');
+    }
+
+    function isValidAvailabilitySettingWrite(docId) {
+      return request.resource != null &&
+        request.resource.data.keys().hasOnly([
+          'key',
+          'value',
+          'updatedAt',
+          'updatedByUid',
+          'updateSource',
+        ]) &&
+        request.resource.data.key == docId &&
+        isAvailabilityAuditWrite('admin-mobile-availability') &&
+        (
+          (docId == 'default_max_bookings_per_slot' &&
+            isIntegerInRange(request.resource.data.value, 0, 20)) ||
+          (docId == 'default_slot_interval_minutes' &&
+            isIntegerInRange(request.resource.data.value, 5, 240))
+        );
+    }
+
     function isValidBookingPolicyValue(value) {
       return value is map &&
         value.keys().hasOnly([
@@ -228,7 +282,156 @@ service cloud.firestore {
     }
 
     function isValidBusinessSettingsWrite(docId) {
-      return docId != 'booking_policy' || isValidBookingPolicyWrite();
+      return (docId == 'booking_policy' && isValidBookingPolicyWrite()) ||
+        (docId in ['default_max_bookings_per_slot', 'default_slot_interval_minutes'] &&
+          isValidAvailabilitySettingWrite(docId)) ||
+        !(docId in [
+          'booking_policy',
+          'default_max_bookings_per_slot',
+          'default_slot_interval_minutes',
+        ]);
+    }
+
+    function isValidActiveCapacityOverrideWrite(docId) {
+      return request.resource != null &&
+        request.resource.data.keys().hasOnly([
+          'date',
+          'maxBookingsPerSlot',
+          'active',
+          'clearedAt',
+          'clearedByUid',
+          'updatedAt',
+          'updatedByUid',
+          'updateSource',
+        ]) &&
+        request.resource.data.keys().hasAll([
+          'date',
+          'maxBookingsPerSlot',
+          'active',
+          'updatedAt',
+          'updatedByUid',
+          'updateSource',
+        ]) &&
+        isDateKey(docId) &&
+        request.resource.data.date == docId &&
+        request.resource.data.active == true &&
+        isIntegerInRange(request.resource.data.maxBookingsPerSlot, 0, 20) &&
+        optionalTimestampField('clearedAt') &&
+        optionalStringField('clearedByUid', 128) &&
+        isAvailabilityAuditWrite('admin-mobile-availability');
+    }
+
+    function isValidClearedCapacityOverrideWrite(docId) {
+      return request.resource != null &&
+        request.resource.data.keys().hasOnly([
+          'date',
+          'active',
+          'clearedAt',
+          'clearedByUid',
+          'updatedAt',
+          'updatedByUid',
+          'updateSource',
+        ]) &&
+        request.resource.data.keys().hasAll([
+          'date',
+          'active',
+          'clearedAt',
+          'clearedByUid',
+          'updatedAt',
+          'updatedByUid',
+          'updateSource',
+        ]) &&
+        isDateKey(docId) &&
+        request.resource.data.date == docId &&
+        request.resource.data.active == false &&
+        request.resource.data.clearedAt is timestamp &&
+        request.resource.data.clearedByUid == request.auth.uid &&
+        isAvailabilityAuditWrite('admin-mobile-availability');
+    }
+
+    function isValidCapacityOverrideWrite(docId) {
+      return isValidActiveCapacityOverrideWrite(docId) ||
+        isValidClearedCapacityOverrideWrite(docId);
+    }
+
+    function isValidActiveBlockedSlotWrite(docId) {
+      return request.resource != null &&
+        request.resource.data.keys().hasOnly([
+          'blockedSlotId',
+          'date',
+          'slotStart',
+          'slotEnd',
+          'reason',
+          'active',
+          'clearedAt',
+          'clearedByUid',
+          'updatedAt',
+          'updatedByUid',
+          'updateSource',
+        ]) &&
+        request.resource.data.keys().hasAll([
+          'blockedSlotId',
+          'date',
+          'slotStart',
+          'slotEnd',
+          'reason',
+          'active',
+          'updatedAt',
+          'updatedByUid',
+          'updateSource',
+        ]) &&
+        isAvailabilityAdminDocId(docId) &&
+        request.resource.data.blockedSlotId == docId &&
+        isDateKey(request.resource.data.date) &&
+        request.resource.data.active == true &&
+        isIsoInstantForDate(request.resource.data.slotStart, request.resource.data.date) &&
+        isIsoInstantForDate(request.resource.data.slotEnd, request.resource.data.date) &&
+        request.resource.data.slotStart < request.resource.data.slotEnd &&
+        isShortString(request.resource.data.reason, 1, 160) &&
+        optionalTimestampField('clearedAt') &&
+        optionalStringField('clearedByUid', 128) &&
+        isAvailabilityAuditWrite('admin-mobile-availability');
+    }
+
+    function isValidClearedBlockedSlotWrite(docId) {
+      return request.resource != null &&
+        request.resource.data.keys().hasOnly([
+          'blockedSlotId',
+          'date',
+          'slotStart',
+          'slotEnd',
+          'reason',
+          'active',
+          'clearedAt',
+          'clearedByUid',
+          'updatedAt',
+          'updatedByUid',
+          'updateSource',
+        ]) &&
+        request.resource.data.keys().hasAll([
+          'blockedSlotId',
+          'active',
+          'clearedAt',
+          'clearedByUid',
+          'updatedAt',
+          'updatedByUid',
+          'updateSource',
+        ]) &&
+        isAvailabilityAdminDocId(docId) &&
+        request.resource.data.blockedSlotId == docId &&
+        request.resource.data.active == false &&
+        optionalDateKeyField('date') &&
+        optionalIsoInstantField('slotStart') &&
+        optionalIsoInstantField('slotEnd') &&
+        optionalStringField('reason', 160) &&
+        request.resource.data.clearedAt is timestamp &&
+        request.resource.data.clearedByUid == request.auth.uid &&
+        isAvailabilityAuditWrite('admin-mobile-availability');
+    }
+
+    function isValidBlockedSlotWrite(docId) {
+      return isValidActiveBlockedSlotWrite(docId) ||
+        isValidClearedBlockedSlotWrite(docId);
     }
 
     match /admin_allowlist/{docId} {
@@ -303,7 +506,8 @@ service cloud.firestore {
 
     match /blocked_slots/{docId} {
       allow read: if isStaff();
-      allow write: if isAdmin();
+      allow create, update: if isAdmin() && isValidBlockedSlotWrite(docId);
+      allow delete: if false;
     }
 
     match /workers/{docId} {
@@ -318,7 +522,8 @@ service cloud.firestore {
 
     match /capacity_overrides/{docId} {
       allow read: if isStaff();
-      allow write: if isAdmin();
+      allow create, update: if isAdmin() && isValidCapacityOverrideWrite(docId);
+      allow delete: if false;
     }
 
     match /{document=**} {

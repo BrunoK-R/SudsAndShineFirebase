@@ -82,6 +82,41 @@ function validBookingPolicyPayload(now = Timestamp.fromDate(new Date())) {
   };
 }
 
+function validAvailabilitySettingPayload(docId, value, now = Timestamp.fromDate(new Date())) {
+  return {
+    key: docId,
+    value,
+    updatedAt: now,
+    updatedByUid: 'admin-1',
+    updateSource: 'admin-mobile-availability',
+  };
+}
+
+function validBlockedSlotPayload(now = Timestamp.fromDate(new Date())) {
+  return {
+    blockedSlotId: 'b-2',
+    date: '2026-04-08',
+    slotStart: '2026-04-08T15:00:00.000Z',
+    slotEnd: '2026-04-08T16:00:00.000Z',
+    reason: 'Admin block',
+    active: true,
+    updatedAt: now,
+    updatedByUid: 'admin-1',
+    updateSource: 'admin-mobile-availability',
+  };
+}
+
+function validCapacityOverridePayload(now = Timestamp.fromDate(new Date())) {
+  return {
+    date: '2026-06-11',
+    maxBookingsPerSlot: 0,
+    active: true,
+    updatedAt: now,
+    updatedByUid: 'admin-1',
+    updateSource: 'admin-mobile-availability',
+  };
+}
+
 test.before(async () => {
   testEnv = await initializeTestEnvironment({
     projectId: PROJECT_ID,
@@ -176,6 +211,36 @@ test('booking policy business setting requires admin audit and safe shape', asyn
     updateSource: 'admin-mobile-booking-policy',
   }));
   await assertFails(deleteDoc(doc(adminDb(), 'business_settings', 'booking_policy')));
+});
+
+test('availability business settings require admin audit and safe shape', async () => {
+  const now = Timestamp.fromDate(new Date());
+  const validCapacity = validAvailabilitySettingPayload('default_max_bookings_per_slot', 4, now);
+  const validSlotInterval = validAvailabilitySettingPayload('default_slot_interval_minutes', 45, now);
+
+  await assertSucceeds(setDoc(doc(adminDb(), 'business_settings', 'default_max_bookings_per_slot'), validCapacity));
+  await assertSucceeds(setDoc(doc(adminDb(), 'business_settings', 'default_slot_interval_minutes'), validSlotInterval));
+  await assertFails(setDoc(doc(staffDb(), 'business_settings', 'default_max_bookings_per_slot'), validCapacity));
+  await assertFails(setDoc(doc(adminDb(), 'business_settings', 'default_max_bookings_per_slot'), {
+    ...validCapacity,
+    value: 30,
+  }));
+  await assertFails(setDoc(doc(adminDb(), 'business_settings', 'default_slot_interval_minutes'), {
+    ...validSlotInterval,
+    value: 300,
+  }));
+  await assertFails(setDoc(doc(adminDb(), 'business_settings', 'default_slot_interval_minutes'), {
+    ...validSlotInterval,
+    updatedByUid: 'other-admin',
+  }));
+  await assertFails(setDoc(doc(adminDb(), 'business_settings', 'default_max_bookings_per_slot'), {
+    ...validCapacity,
+    updateSource: 'console',
+  }));
+  await assertFails(setDoc(doc(adminDb(), 'business_settings', 'default_slot_interval_minutes'), {
+    ...validSlotInterval,
+    internalNote: 'not allowed',
+  }));
 });
 
 test('admin settings are hidden from non-admin direct clients', async () => {
@@ -472,6 +537,7 @@ test('public reservation create is allowed only with valid payload shape', async
 });
 
 test('only staff can read reservations and blocked slots', async () => {
+  const now = Timestamp.fromDate(new Date());
   await seedDoc('reservations', 'r-1', validReservationPayload());
   await seedDoc('blocked_slots', 'b-1', {
     date: '2026-04-08',
@@ -491,15 +557,32 @@ test('only staff can read reservations and blocked slots', async () => {
     slotEnd: '2026-04-08T16:00:00.000Z',
     reason: 'Staff cannot block directly',
   }));
-  await assertSucceeds(setDoc(doc(adminDb(), 'blocked_slots', 'b-2'), {
-    date: '2026-04-08',
-    slotStart: '2026-04-08T15:00:00.000Z',
-    slotEnd: '2026-04-08T16:00:00.000Z',
-    reason: 'Admin block',
+  await assertSucceeds(setDoc(doc(adminDb(), 'blocked_slots', 'b-2'), validBlockedSlotPayload(now)));
+  await assertFails(setDoc(doc(adminDb(), 'blocked_slots', 'b-2'), {
+    ...validBlockedSlotPayload(now),
+    blockedSlotId: 'different-id',
   }));
+  await assertFails(setDoc(doc(adminDb(), 'blocked_slots', 'b-2'), {
+    ...validBlockedSlotPayload(now),
+    slotEnd: '2026-04-08T14:00:00.000Z',
+  }));
+  await assertFails(setDoc(doc(adminDb(), 'blocked_slots', 'b-2'), {
+    ...validBlockedSlotPayload(now),
+    updateSource: 'console',
+  }));
+  await assertSucceeds(updateDoc(doc(adminDb(), 'blocked_slots', 'b-2'), {
+    active: false,
+    clearedAt: now,
+    clearedByUid: 'admin-1',
+    updatedAt: now,
+    updatedByUid: 'admin-1',
+    updateSource: 'admin-mobile-availability',
+  }));
+  await assertFails(deleteDoc(doc(adminDb(), 'blocked_slots', 'b-2')));
 });
 
 test('capacity overrides are staff-readable and admin-writable only', async () => {
+  const now = Timestamp.fromDate(new Date());
   await seedDoc('capacity_overrides', '2026-06-10', {
     date: '2026-06-10',
     maxBookingsPerSlot: 4,
@@ -511,10 +594,29 @@ test('capacity overrides are staff-readable and admin-writable only', async () =
     date: '2026-06-11',
     maxBookingsPerSlot: 0,
   }));
+  await assertSucceeds(setDoc(doc(adminDb(), 'capacity_overrides', '2026-06-11'), validCapacityOverridePayload(now)));
+  await assertFails(setDoc(doc(adminDb(), 'capacity_overrides', '2026-06-11'), {
+    ...validCapacityOverridePayload(now),
+    maxBookingsPerSlot: 30,
+  }));
+  await assertFails(setDoc(doc(adminDb(), 'capacity_overrides', '2026-06-11'), {
+    ...validCapacityOverridePayload(now),
+    updatedByUid: 'other-admin',
+  }));
+  await assertFails(setDoc(doc(adminDb(), 'capacity_overrides', '2026-06-11'), {
+    ...validCapacityOverridePayload(now),
+    updateSource: 'console',
+  }));
   await assertSucceeds(setDoc(doc(adminDb(), 'capacity_overrides', '2026-06-11'), {
     date: '2026-06-11',
-    maxBookingsPerSlot: 0,
+    active: false,
+    clearedAt: now,
+    clearedByUid: 'admin-1',
+    updatedAt: now,
+    updatedByUid: 'admin-1',
+    updateSource: 'admin-mobile-availability',
   }));
+  await assertFails(deleteDoc(doc(adminDb(), 'capacity_overrides', '2026-06-11')));
 });
 
 test('only staff can read and write reservation reviews directly', async () => {
