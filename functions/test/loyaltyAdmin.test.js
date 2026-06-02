@@ -16,10 +16,14 @@ test("buildLoyaltySettings returns safe defaults when no settings exist", () => 
   assert.equal(settings.rewardValue, 1);
   assert.equal(settings.rewardDescription, "1 lavagem grátis");
   assert.equal(settings.source, "default");
+  assert.equal(settings.updatedAtIso, "");
+  assert.equal(settings.updatedByUid, "");
 });
 
 test("buildLoyaltySettings maps nested legacy settings", () => {
   const settings = buildLoyaltySettings(doc({
+    updatedAt: new Date("2026-06-01T10:15:00.000Z"),
+    updatedByUid: " admin-updated ",
     value: {
       stamps_required: "8",
       reward_type: "discount_percent",
@@ -33,6 +37,26 @@ test("buildLoyaltySettings maps nested legacy settings", () => {
   assert.equal(settings.rewardValue, 15);
   assert.equal(settings.rewardDescription, "15% de desconto");
   assert.equal(settings.source, "firestore");
+  assert.equal(settings.updatedAtIso, "2026-06-01T10:15:00.000Z");
+  assert.equal(settings.updatedByUid, "admin-updated");
+});
+
+test("buildLoyaltySettings normalizes timestamp-like audit metadata", () => {
+  const fromTimestamp = buildLoyaltySettings(doc({
+    updatedAt: {seconds: 1780309800, nanoseconds: 500000000},
+    updatedByUid: "admin-ts",
+    value: validPayload(),
+  }));
+  const fromString = buildLoyaltySettings(doc({
+    updatedAt: "2026-06-01T12:45:00.000Z",
+    updatedByUid: " admin-string ",
+    value: validPayload(),
+  }));
+
+  assert.equal(fromTimestamp.updatedAtIso, "2026-06-01T10:30:00.500Z");
+  assert.equal(fromTimestamp.updatedByUid, "admin-ts");
+  assert.equal(fromString.updatedAtIso, "2026-06-01T12:45:00.000Z");
+  assert.equal(fromString.updatedByUid, "admin-string");
 });
 
 test("validateLoyaltySettingsUpdateInput sanitizes admin settings", () => {
@@ -124,5 +148,14 @@ function doc(data) {
   return {
     exists: true,
     data: () => data,
+  };
+}
+
+function validPayload() {
+  return {
+    stampsRequired: 8,
+    rewardType: "discount_amount",
+    rewardValue: 1500,
+    rewardDescription: "15 euros de desconto",
   };
 }

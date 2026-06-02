@@ -68,6 +68,32 @@ function cleanRewardDescription(value, fallback = DEFAULT_LOYALTY_SETTINGS.rewar
   return trimmed.slice(0, MAX_REWARD_DESCRIPTION_LENGTH);
 }
 
+function cleanAuditString(value, fallback = "", maxLength = 128) {
+  if (typeof value !== "string") return fallback;
+  const trimmed = value.trim();
+  if (!trimmed) return fallback;
+  return trimmed.slice(0, maxLength);
+}
+
+function timestampToIso(value) {
+  if (!value) return "";
+  if (value instanceof Date && !Number.isNaN(value.getTime())) return value.toISOString();
+  if (typeof value.toDate === "function") {
+    const date = value.toDate();
+    if (date instanceof Date && !Number.isNaN(date.getTime())) return date.toISOString();
+  }
+  if (typeof value.seconds === "number") {
+    const millis = value.seconds * 1000 + Math.floor((value.nanoseconds || 0) / 1000000);
+    const date = new Date(millis);
+    if (!Number.isNaN(date.getTime())) return date.toISOString();
+  }
+  if (typeof value === "string") {
+    const date = new Date(value);
+    if (!Number.isNaN(date.getTime())) return date.toISOString();
+  }
+  return "";
+}
+
 function requiredRewardDescription(value) {
   if (typeof value !== "string") {
     throw new HttpsError("invalid-argument", "rewardDescription is required");
@@ -83,7 +109,8 @@ function requiredRewardDescription(value) {
 }
 
 function buildLoyaltySettings(docSnap = null) {
-  const source = docSnap?.exists ? settingPayload(docSnap.data()) : settingPayload(docSnap);
+  const root = docSnap?.exists ? docSnap.data() : docSnap;
+  const source = settingPayload(root);
   const rewardType = cleanRewardType(source.rewardType ?? source.reward_type);
   const valueRange = rewardValueRangeForType(rewardType);
   const settings = normalizeLoyaltySettings({
@@ -105,6 +132,8 @@ function buildLoyaltySettings(docSnap = null) {
     ),
     rewardDescription: cleanRewardDescription(settings.rewardDescription),
     source: docSnap?.exists ? "firestore" : "default",
+    updatedAtIso: timestampToIso(root?.updatedAt || source.updatedAt),
+    updatedByUid: cleanAuditString(root?.updatedByUid || source.updatedByUid),
   };
 }
 

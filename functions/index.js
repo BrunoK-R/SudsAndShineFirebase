@@ -1617,6 +1617,7 @@ exports.updateLoyaltySettings = onCall(async (request) => {
   await assertAdminRequest(request);
   const settings = validateLoyaltySettingsUpdateInput(request.data);
   const value = buildLoyaltySettingsValue(settings);
+  const updatedAt = new Date();
 
   await loyaltySettingsRef().set(
     {
@@ -1632,6 +1633,8 @@ exports.updateLoyaltySettings = onCall(async (request) => {
   return {
     ...settings,
     source: "firestore",
+    updatedAtIso: updatedAt.toISOString(),
+    updatedByUid: request.auth.uid,
   };
 });
 
