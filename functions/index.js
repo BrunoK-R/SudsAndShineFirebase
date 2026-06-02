@@ -4,6 +4,7 @@ const {onCall, onRequest, HttpsError} = require("firebase-functions/v2/https");
 const {onSchedule} = require("firebase-functions/v2/scheduler");
 const {
   ACTIVE_RESERVATION_STATUS_VALUES,
+  availabilityRequestWithDefaultSlotInterval,
   buildAvailabilityMonth,
   countOverlappingReservations,
   generateDeterministicReservationCode,
@@ -663,6 +664,10 @@ exports.getAvailability = onCall(async (request) => {
     .collection("business_settings")
     .where("key", "==", "default_max_bookings_per_slot")
     .limit(1);
+  const defaultSlotIntervalQuery = db
+    .collection("business_settings")
+    .where("key", "==", "default_slot_interval_minutes")
+    .limit(1);
   const businessInfoRef = db.collection("business_settings").doc("business_info");
   const businessInfoQuery = db
     .collection("business_settings")
@@ -674,6 +679,7 @@ exports.getAvailability = onCall(async (request) => {
     blockedSnap,
     capacityOverrideSnap,
     defaultCapacitySnap,
+    defaultSlotIntervalSnap,
     businessInfoSnap,
     keyedBusinessInfoSnap,
   ] = await Promise.all([
@@ -681,13 +687,19 @@ exports.getAvailability = onCall(async (request) => {
     blockedQuery.get(),
     capacityOverrideQuery.get(),
     defaultCapacityQuery.get(),
+    defaultSlotIntervalQuery.get(),
     businessInfoRef.get(),
     businessInfoQuery.get(),
   ]);
   const businessInfo = businessInfoFromSnapshots(businessInfoSnap, keyedBusinessInfoSnap);
+  const effectiveAvailabilityRequest = availabilityRequestWithDefaultSlotInterval(
+    availabilityRequest,
+    request.data,
+    defaultSlotIntervalSnap.empty ? null : defaultSlotIntervalSnap.docs[0].data(),
+  );
 
   return buildAvailabilityMonth({
-    request: availabilityRequest,
+    request: effectiveAvailabilityRequest,
     reservations: reservationsSnap.docs.map((docSnap) => docSnap.data()),
     blockedSlots: blockedSnap.docs.map((docSnap) => docSnap.data()),
     capacityOverrides: capacityOverrideSnap.docs.map((docSnap) => docSnap.data()),
@@ -1512,12 +1524,14 @@ exports.getAdminAvailabilityConfiguration = onCall(async (request) => {
     directSnap,
     keyedSnap,
     defaultCapacitySnap,
+    defaultSlotIntervalSnap,
     capacityOverridesSnap,
     blockedSlotsSnap,
   ] = await Promise.all([
     db.collection("business_settings").doc("business_info").get(),
     db.collection("business_settings").where("key", "==", "business_info").limit(1).get(),
     db.collection("business_settings").where("key", "==", "default_max_bookings_per_slot").limit(1).get(),
+    db.collection("business_settings").where("key", "==", "default_slot_interval_minutes").limit(1).get(),
     db.collection("capacity_overrides").orderBy("date").limit(120).get(),
     db.collection("blocked_slots").orderBy("date").limit(240).get(),
   ]);
@@ -1527,6 +1541,7 @@ exports.getAdminAvailabilityConfiguration = onCall(async (request) => {
   return buildAdminAvailabilityConfig({
     businessInfo,
     defaultCapacitySetting: defaultCapacitySnap.empty ? null : defaultCapacitySnap.docs[0].data(),
+    defaultSlotIntervalSetting: defaultSlotIntervalSnap.empty ? null : defaultSlotIntervalSnap.docs[0].data(),
     capacityOverrideDocs: capacityOverridesSnap.docs,
     blockedSlotDocs: blockedSlotsSnap.docs,
   });
@@ -1803,9 +1818,10 @@ exports.updateAvailabilityConfiguration = onCall(async (request) => {
   await assertAdminRequest(request);
   const availability = validateAvailabilityConfigurationInput(request.data);
 
-  const [directSnap, keyedSnap] = await Promise.all([
+  const [directSnap, keyedSnap, defaultSlotIntervalSnap] = await Promise.all([
     db.collection("business_settings").doc("business_info").get(),
     db.collection("business_settings").where("key", "==", "business_info").limit(1).get(),
+    db.collection("business_settings").where("key", "==", "default_slot_interval_minutes").limit(1).get(),
   ]);
   const businessInfo = businessInfoFromSnapshots(directSnap, keyedSnap);
   assertBusinessInfoReadable(businessInfo);
@@ -1839,6 +1855,19 @@ exports.updateAvailabilityConfiguration = onCall(async (request) => {
     },
     {merge: true},
   );
+  if (availability.defaultSlotIntervalMinutes !== null) {
+    batch.set(
+      db.collection("business_settings").doc("default_slot_interval_minutes"),
+      {
+        key: "default_slot_interval_minutes",
+        value: availability.defaultSlotIntervalMinutes,
+        updatedAt: now,
+        updatedByUid: request.auth.uid,
+        updateSource: "admin-mobile-availability",
+      },
+      {merge: true},
+    );
+  }
   await batch.commit();
 
   const [capacityOverridesSnap, blockedSlotsSnap] = await Promise.all([
@@ -1849,6 +1878,9 @@ exports.updateAvailabilityConfiguration = onCall(async (request) => {
   return buildAdminAvailabilityConfig({
     businessInfo: updatedBusinessInfo,
     defaultCapacitySetting: {value: availability.defaultMaxBookingsPerSlot},
+    defaultSlotIntervalSetting: availability.defaultSlotIntervalMinutes === null ?
+      (defaultSlotIntervalSnap.empty ? null : defaultSlotIntervalSnap.docs[0].data()) :
+      {value: availability.defaultSlotIntervalMinutes},
     capacityOverrideDocs: capacityOverridesSnap.docs,
     blockedSlotDocs: blockedSlotsSnap.docs,
   });

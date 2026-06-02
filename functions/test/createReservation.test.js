@@ -2,6 +2,7 @@ const test = require("node:test");
 const assert = require("node:assert/strict");
 const {
   ACTIVE_RESERVATION_STATUS_VALUES,
+  availabilityRequestWithDefaultSlotInterval,
   buildAvailabilityMonth,
   buildDefaultSlotWindows,
   buildSlotWindows,
@@ -15,6 +16,7 @@ const {
   resolveSelectedExtras,
   resolveCapacityLimit,
   resolveAvailabilityRequest,
+  readDefaultSlotIntervalFromSetting,
   totalSelectedExtrasPriceCents,
   validateCreateReservationInput,
 } = require("../createReservation");
@@ -204,6 +206,35 @@ test("resolveAvailabilityRequest returns current month window with validated dur
   assert.equal(request.todayKey, "2026-05-20");
   assert.equal(request.serviceDurationMinutes, 45);
   assert.equal(request.slotIntervalMinutes, 30);
+});
+
+test("availabilityRequestWithDefaultSlotInterval uses admin setting only when request omits interval", () => {
+  const implicitRequest = resolveAvailabilityRequest(
+    {anchorDate: "2026-05-20", serviceDurationMinutes: 45},
+    new Date("2026-05-20T08:00:00.000Z"),
+  );
+  const explicitRequest = resolveAvailabilityRequest(
+    {anchorDate: "2026-05-20", serviceDurationMinutes: 45, slotIntervalMinutes: 15},
+    new Date("2026-05-20T08:00:00.000Z"),
+  );
+
+  assert.equal(readDefaultSlotIntervalFromSetting({value: {slotIntervalMinutes: "20"}}), 20);
+  assert.equal(
+    availabilityRequestWithDefaultSlotInterval(
+      implicitRequest,
+      {anchorDate: "2026-05-20", serviceDurationMinutes: 45},
+      {value: 20},
+    ).slotIntervalMinutes,
+    20,
+  );
+  assert.equal(
+    availabilityRequestWithDefaultSlotInterval(
+      explicitRequest,
+      {anchorDate: "2026-05-20", serviceDurationMinutes: 45, slotIntervalMinutes: 15},
+      {value: 20},
+    ).slotIntervalMinutes,
+    15,
+  );
 });
 
 test("buildDefaultSlotWindows respects operating days and lunch break", () => {

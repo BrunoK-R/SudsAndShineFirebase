@@ -1,7 +1,10 @@
 const {HttpsError} = require("firebase-functions/v2/https");
 
 const DEFAULT_MAX_BOOKINGS_PER_SLOT = 2;
+const DEFAULT_SLOT_INTERVAL_MINUTES = 30;
 const MAX_BOOKINGS_PER_SLOT = 20;
+const MIN_SLOT_INTERVAL_MINUTES = 5;
+const MAX_SLOT_INTERVAL_MINUTES = 240;
 const MAX_OPENING_HOURS = 10;
 const MAX_BLOCKED_SLOT_REASON_LENGTH = 160;
 const MAX_BLOCKED_SLOT_MINUTES = 24 * 60;
@@ -35,6 +38,55 @@ function readDefaultCapacity(setting) {
   }
 
   return DEFAULT_MAX_BOOKINGS_PER_SLOT;
+}
+
+function parseSlotIntervalValue(value) {
+  if (typeof value === "number" && Number.isFinite(value)) {
+    return Math.floor(value);
+  }
+  if (typeof value === "string" && value.trim()) {
+    const parsed = Number(value);
+    if (Number.isFinite(parsed)) {
+      return Math.floor(parsed);
+    }
+  }
+  return null;
+}
+
+function validSlotIntervalOrNull(value) {
+  return value !== null &&
+    value >= MIN_SLOT_INTERVAL_MINUTES &&
+    value <= MAX_SLOT_INTERVAL_MINUTES ?
+    value :
+    null;
+}
+
+function hasSlotIntervalInput(data) {
+  return Boolean(
+    data &&
+    (data.defaultSlotIntervalMinutes !== undefined ||
+      data.slotIntervalMinutes !== undefined),
+  );
+}
+
+function readDefaultSlotInterval(setting) {
+  if (!setting || typeof setting !== "object") return DEFAULT_SLOT_INTERVAL_MINUTES;
+
+  const direct = validSlotIntervalOrNull(parseSlotIntervalValue(setting.value));
+  if (direct !== null) return direct;
+
+  if (setting.value && typeof setting.value === "object") {
+    const nested = validSlotIntervalOrNull(parseSlotIntervalValue(setting.value.defaultSlotIntervalMinutes));
+    if (nested !== null) return nested;
+
+    const nestedCamel = validSlotIntervalOrNull(parseSlotIntervalValue(setting.value.slotIntervalMinutes));
+    if (nestedCamel !== null) return nestedCamel;
+
+    const nestedLegacy = validSlotIntervalOrNull(parseSlotIntervalValue(setting.value.slot_interval_minutes));
+    if (nestedLegacy !== null) return nestedLegacy;
+  }
+
+  return DEFAULT_SLOT_INTERVAL_MINUTES;
 }
 
 function requiredString(value, fieldName, maxLength) {
@@ -203,8 +255,26 @@ function validateAvailabilityConfigurationInput(data = {}) {
     );
   }
 
+  let slotIntervalMinutes = null;
+  if (hasSlotIntervalInput(data)) {
+    slotIntervalMinutes = parseSlotIntervalValue(
+      data.defaultSlotIntervalMinutes ?? data.slotIntervalMinutes,
+    );
+    if (
+      slotIntervalMinutes === null ||
+      slotIntervalMinutes < MIN_SLOT_INTERVAL_MINUTES ||
+      slotIntervalMinutes > MAX_SLOT_INTERVAL_MINUTES
+    ) {
+      throw new HttpsError(
+        "invalid-argument",
+        `defaultSlotIntervalMinutes must be an integer between ${MIN_SLOT_INTERVAL_MINUTES} and ${MAX_SLOT_INTERVAL_MINUTES}`,
+      );
+    }
+  }
+
   return {
     defaultMaxBookingsPerSlot: capacity,
+    defaultSlotIntervalMinutes: slotIntervalMinutes,
     openingHours: validateOpeningHours(data.openingHours),
   };
 }
@@ -354,11 +424,13 @@ function buildCapacityOverrideDocument(override, uid) {
 function buildAdminAvailabilityConfig({
   businessInfo,
   defaultCapacitySetting,
+  defaultSlotIntervalSetting,
   capacityOverrideDocs = [],
   blockedSlotDocs = [],
 }) {
   return {
     defaultMaxBookingsPerSlot: readDefaultCapacity(defaultCapacitySetting),
+    defaultSlotIntervalMinutes: readDefaultSlotInterval(defaultSlotIntervalSetting),
     openingHours: Array.isArray(businessInfo?.openingHours) ? businessInfo.openingHours : [],
     capacityOverrides: (capacityOverrideDocs || [])
       .map(normalizeCapacityOverrideDoc)
@@ -376,10 +448,12 @@ function buildAdminAvailabilityConfig({
 
 module.exports = {
   DEFAULT_MAX_BOOKINGS_PER_SLOT,
+  DEFAULT_SLOT_INTERVAL_MINUTES,
   buildAdminAvailabilityConfig,
   buildBlockedSlotDocument,
   buildCapacityOverrideDocument,
   readDefaultCapacity,
+  readDefaultSlotInterval,
   timestampToIso,
   validateAvailabilityConfigurationInput,
   validateBlockedSlotClearInput,

@@ -42,6 +42,9 @@ const MONTH_SHORT_NAMES_PT = [
   "nov",
   "dez",
 ];
+const DEFAULT_SLOT_INTERVAL_MINUTES = 30;
+const MIN_SLOT_INTERVAL_MINUTES = 5;
+const MAX_SLOT_INTERVAL_MINUTES = 240;
 
 function assertRequiredString(value, fieldName) {
   if (typeof value !== "string" || !value.trim()) {
@@ -125,6 +128,58 @@ function parsePositiveInteger(value, fieldName, defaultValue, minValue, maxValue
   return parsed;
 }
 
+function parseSlotIntervalSettingValue(value) {
+  if (typeof value === "number" && Number.isFinite(value)) {
+    return Math.floor(value);
+  }
+  if (typeof value === "string" && value.trim()) {
+    const parsed = Number(value);
+    if (Number.isFinite(parsed)) {
+      return Math.floor(parsed);
+    }
+  }
+  return null;
+}
+
+function validSlotIntervalOrNull(value) {
+  return value !== null &&
+    value >= MIN_SLOT_INTERVAL_MINUTES &&
+    value <= MAX_SLOT_INTERVAL_MINUTES ?
+    value :
+    null;
+}
+
+function readDefaultSlotIntervalFromSetting(setting) {
+  if (!setting || typeof setting !== "object") return DEFAULT_SLOT_INTERVAL_MINUTES;
+
+  const direct = validSlotIntervalOrNull(parseSlotIntervalSettingValue(setting.value));
+  if (direct !== null) return direct;
+
+  if (setting.value && typeof setting.value === "object") {
+    const nestedDefault = validSlotIntervalOrNull(
+      parseSlotIntervalSettingValue(setting.value.defaultSlotIntervalMinutes),
+    );
+    if (nestedDefault !== null) return nestedDefault;
+
+    const nestedCamel = validSlotIntervalOrNull(parseSlotIntervalSettingValue(setting.value.slotIntervalMinutes));
+    if (nestedCamel !== null) return nestedCamel;
+
+    const nestedLegacy = validSlotIntervalOrNull(parseSlotIntervalSettingValue(setting.value.slot_interval_minutes));
+    if (nestedLegacy !== null) return nestedLegacy;
+  }
+
+  return DEFAULT_SLOT_INTERVAL_MINUTES;
+}
+
+function hasExplicitSlotInterval(rawData) {
+  return Boolean(
+    rawData &&
+    rawData.slotIntervalMinutes !== undefined &&
+    rawData.slotIntervalMinutes !== null &&
+    rawData.slotIntervalMinutes !== "",
+  );
+}
+
 function monthEndFor(anchorDate) {
   return new Date(Date.UTC(anchorDate.getUTCFullYear(), anchorDate.getUTCMonth() + 1, 0));
 }
@@ -164,7 +219,21 @@ function resolveAvailabilityRequest(rawData, now = new Date()) {
       5,
       480,
     ),
-    slotIntervalMinutes: parsePositiveInteger(data.slotIntervalMinutes, "slotIntervalMinutes", 30, 5, 240),
+    slotIntervalMinutes: parsePositiveInteger(
+      data.slotIntervalMinutes,
+      "slotIntervalMinutes",
+      DEFAULT_SLOT_INTERVAL_MINUTES,
+      MIN_SLOT_INTERVAL_MINUTES,
+      MAX_SLOT_INTERVAL_MINUTES,
+    ),
+  };
+}
+
+function availabilityRequestWithDefaultSlotInterval(request, rawData, defaultSlotIntervalSetting) {
+  if (hasExplicitSlotInterval(rawData)) return request;
+  return {
+    ...request,
+    slotIntervalMinutes: readDefaultSlotIntervalFromSetting(defaultSlotIntervalSetting),
   };
 }
 
@@ -705,6 +774,7 @@ module.exports = {
   buildAvailabilityMonth,
   buildDefaultSlotWindows,
   buildSlotWindows,
+  availabilityRequestWithDefaultSlotInterval,
   countOverlappingReservations,
   generateDeterministicReservationCode,
   hasBlockedSlotOverlap,
@@ -716,6 +786,7 @@ module.exports = {
   resolveSelectedExtras,
   resolveCapacityLimit,
   resolveAvailabilityRequest,
+  readDefaultSlotIntervalFromSetting,
   totalSelectedExtrasPriceCents,
   validateCreateReservationInput,
 };

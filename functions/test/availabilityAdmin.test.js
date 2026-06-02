@@ -5,6 +5,7 @@ const {
   buildBlockedSlotDocument,
   buildCapacityOverrideDocument,
   readDefaultCapacity,
+  readDefaultSlotInterval,
   validateAvailabilityConfigurationInput,
   validateBlockedSlotClearInput,
   validateBlockedSlotInput,
@@ -23,6 +24,11 @@ test("buildAdminAvailabilityConfig maps current capacity and operating hours", (
     defaultCapacitySetting: {
       value: {
         maxBookingsPerSlot: "3",
+      },
+    },
+    defaultSlotIntervalSetting: {
+      value: {
+        defaultSlotIntervalMinutes: "45",
       },
     },
     capacityOverrideDocs: [
@@ -71,6 +77,7 @@ test("buildAdminAvailabilityConfig maps current capacity and operating hours", (
   });
 
   assert.equal(config.defaultMaxBookingsPerSlot, 3);
+  assert.equal(config.defaultSlotIntervalMinutes, 45);
   assert.equal(config.openingHours.length, 2);
   assert.equal(config.openingHours[0].dayLabel, "Segunda a Sexta");
   assert.deepEqual(config.capacityOverrides, [
@@ -115,9 +122,17 @@ test("readDefaultCapacity falls back safely when setting is missing", () => {
   assert.equal(readDefaultCapacity({value: {max_bookings_per_slot: 5}}), 5);
 });
 
+test("readDefaultSlotInterval falls back safely when setting is missing or invalid", () => {
+  assert.equal(readDefaultSlotInterval(null), 30);
+  assert.equal(readDefaultSlotInterval({value: "20"}), 20);
+  assert.equal(readDefaultSlotInterval({value: {slot_interval_minutes: 15}}), 15);
+  assert.equal(readDefaultSlotInterval({value: 300}), 30);
+});
+
 test("validateAvailabilityConfigurationInput sanitizes admin settings", () => {
   const config = validateAvailabilityConfigurationInput({
     defaultMaxBookingsPerSlot: "4",
+    defaultSlotIntervalMinutes: "45",
     openingHours: [
       {dayLabel: " Segunda   a Sexta ", hoursLabel: " 09:00 - 13:00, 14:00 - 19:00 "},
       {day: "Domingo", hours: "Encerrado", closed: true},
@@ -125,10 +140,23 @@ test("validateAvailabilityConfigurationInput sanitizes admin settings", () => {
   });
 
   assert.equal(config.defaultMaxBookingsPerSlot, 4);
+  assert.equal(config.defaultSlotIntervalMinutes, 45);
   assert.deepEqual(config.openingHours, [
     {dayLabel: "Segunda a Sexta", hoursLabel: "09:00 - 13:00, 14:00 - 19:00", closed: false},
     {dayLabel: "Domingo", hoursLabel: "Encerrado", closed: true},
   ]);
+});
+
+test("validateAvailabilityConfigurationInput keeps legacy admin payloads additive", () => {
+  const config = validateAvailabilityConfigurationInput({
+    defaultMaxBookingsPerSlot: 4,
+    openingHours: [
+      {dayLabel: "Segunda", hoursLabel: "09:00 - 19:00"},
+    ],
+  });
+
+  assert.equal(config.defaultMaxBookingsPerSlot, 4);
+  assert.equal(config.defaultSlotIntervalMinutes, null);
 });
 
 test("validateAvailabilityConfigurationInput rejects unsafe settings", () => {
@@ -143,6 +171,16 @@ test("validateAvailabilityConfigurationInput rejects unsafe settings", () => {
   assert.throws(
     () => validateAvailabilityConfigurationInput({
       defaultMaxBookingsPerSlot: 2,
+      defaultSlotIntervalMinutes: 300,
+      openingHours: [{dayLabel: "Segunda", hoursLabel: "09:00 - 19:00"}],
+    }),
+    /defaultSlotIntervalMinutes/,
+  );
+
+  assert.throws(
+    () => validateAvailabilityConfigurationInput({
+      defaultMaxBookingsPerSlot: 2,
+      defaultSlotIntervalMinutes: 30,
       openingHours: [{dayLabel: "Segunda", hoursLabel: "horário completo"}],
     }),
     /valid HH:MM time range/,
@@ -151,6 +189,7 @@ test("validateAvailabilityConfigurationInput rejects unsafe settings", () => {
   assert.throws(
     () => validateAvailabilityConfigurationInput({
       defaultMaxBookingsPerSlot: 2,
+      defaultSlotIntervalMinutes: 30,
       openingHours: [{dayLabel: "Segunda", hoursLabel: "18:00 - 09:00"}],
     }),
     /valid HH:MM time range/,
