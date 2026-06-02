@@ -116,6 +116,7 @@ const {
   buildNotificationTokenValue,
   buildUserNotificationPreferences,
   buildUserNotificationPreferencesValue,
+  scopedUserNotificationPreferencesForRole,
   validateNotificationTokenDeleteInput,
   validateNotificationTokenRegistrationInput,
   validateUserNotificationPreferencesInput,
@@ -1249,13 +1250,23 @@ exports.getMyNotificationPreferences = onCall(async (request) => {
 
 exports.updateMyNotificationPreferences = onCall(async (request) => {
   const uid = assertAuthenticatedUid(request);
-  const preferences = validateUserNotificationPreferencesInput(request.data);
-  const value = buildUserNotificationPreferencesValue(preferences);
+  const requestedPreferences = validateUserNotificationPreferencesInput(request.data);
+  const role = await adminRoles.effectiveRoleFromRequest(db, request);
+  const canManageAdminPendingAlerts = role === "admin";
   const now = admin.firestore.FieldValue.serverTimestamp();
+  let savedPreferences = requestedPreferences;
 
   await db.runTransaction(async (tx) => {
+    const preferencesRef = userNotificationPreferencesRef(uid);
+    const existingPreferencesSnap = canManageAdminPendingAlerts ? null : await tx.get(preferencesRef);
+    savedPreferences = scopedUserNotificationPreferencesForRole(requestedPreferences, {
+      canManageAdminPendingAlerts,
+      existingPreferencesDoc: existingPreferencesSnap,
+    });
+    const value = buildUserNotificationPreferencesValue(savedPreferences);
+
     tx.set(
-      userNotificationPreferencesRef(uid),
+      preferencesRef,
       {
         ownerUid: uid,
         ...value,
@@ -1270,15 +1281,15 @@ exports.updateMyNotificationPreferences = onCall(async (request) => {
       {
         uid,
         email: String(request.auth?.token?.email || "").trim().toLowerCase(),
-        marketingOptIn: preferences.marketingEnabled,
-        appointmentReminderOptIn: preferences.appointmentReminderEnabled,
+        marketingOptIn: savedPreferences.marketingEnabled,
+        appointmentReminderOptIn: savedPreferences.appointmentReminderEnabled,
         updatedAt: now,
       },
       {merge: true},
     );
   });
 
-  return {preferences};
+  return {preferences: savedPreferences};
 });
 
 exports.registerNotificationToken = onCall(async (request) => {

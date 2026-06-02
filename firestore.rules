@@ -131,6 +131,16 @@ service cloud.firestore {
         optionalStringField('updateSource', 80);
     }
 
+    function canCreateAdminPendingAlertPreference() {
+      return isAdmin() ||
+        !request.resource.data.keys().hasAny(['adminPendingAlertEnabled']);
+    }
+
+    function canUpdateAdminPendingAlertPreference() {
+      return isAdmin() ||
+        !request.resource.data.diff(resource.data).affectedKeys().hasAny(['adminPendingAlertEnabled']);
+    }
+
     function isValidNotificationTokenWrite(userId, tokenDocId) {
       return request.resource.data.keys().hasOnly([
           'ownerUid',
@@ -210,7 +220,12 @@ service cloud.firestore {
 
       match /notification_preferences/{docId} {
         allow read: if isOwner(userId);
-        allow create, update: if isOwner(userId) && isValidNotificationPreferenceWrite(userId);
+        allow create: if isOwner(userId) &&
+          isValidNotificationPreferenceWrite(userId) &&
+          canCreateAdminPendingAlertPreference();
+        allow update: if isOwner(userId) &&
+          isValidNotificationPreferenceWrite(userId) &&
+          canUpdateAdminPendingAlertPreference();
         allow delete: if isOwner(userId);
       }
 

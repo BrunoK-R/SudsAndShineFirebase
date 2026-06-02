@@ -4,6 +4,7 @@ const {
   buildNotificationTokenValue,
   buildUserNotificationPreferences,
   buildUserNotificationPreferencesValue,
+  scopedUserNotificationPreferencesForRole,
   validateNotificationTokenDeleteInput,
   validateNotificationTokenRegistrationInput,
   validateUserNotificationPreferencesInput,
@@ -77,6 +78,32 @@ test("validateUserNotificationPreferencesInput normalizes booleans", () => {
     adminPendingAlertEnabled: false,
     marketingEnabled: true,
   });
+});
+
+test("scopedUserNotificationPreferencesForRole preserves admin alert preference for non-admin callers", () => {
+  const requestedPreferences = validateUserNotificationPreferencesInput({
+    bookingStatusEnabled: true,
+    appointmentReminderEnabled: true,
+    loyaltyEnabled: true,
+    adminPendingAlertEnabled: false,
+    marketingEnabled: false,
+  });
+
+  const nonAdminPreferences = scopedUserNotificationPreferencesForRole(requestedPreferences, {
+    canManageAdminPendingAlerts: false,
+    existingPreferencesDoc: doc({
+      adminPendingAlertEnabled: true,
+    }),
+  });
+  const adminPreferences = scopedUserNotificationPreferencesForRole(requestedPreferences, {
+    canManageAdminPendingAlerts: true,
+    existingPreferencesDoc: doc({
+      adminPendingAlertEnabled: true,
+    }),
+  });
+
+  assert.equal(nonAdminPreferences.adminPendingAlertEnabled, true);
+  assert.equal(adminPreferences.adminPendingAlertEnabled, false);
 });
 
 test("validateNotificationTokenRegistrationInput sanitizes dev token metadata", () => {

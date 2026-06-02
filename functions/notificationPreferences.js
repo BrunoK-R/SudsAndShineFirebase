@@ -73,6 +73,26 @@ function validateUserNotificationPreferencesInput(data = {}) {
   };
 }
 
+function scopedUserNotificationPreferencesForRole(
+  preferences,
+  {
+    canManageAdminPendingAlerts = false,
+    existingPreferencesDoc = null,
+    userDoc = null,
+  } = {},
+) {
+  if (canManageAdminPendingAlerts) return preferences;
+
+  const existingPreferences = buildUserNotificationPreferences({
+    preferencesDoc: existingPreferencesDoc,
+    userDoc,
+  });
+  return {
+    ...preferences,
+    adminPendingAlertEnabled: existingPreferences.adminPendingAlertEnabled,
+  };
+}
+
 function buildUserNotificationPreferencesValue(preferences) {
   return {
     bookingStatusEnabled: preferences.bookingStatusEnabled,
@@ -168,6 +188,7 @@ module.exports = {
   buildNotificationTokenValue,
   buildUserNotificationPreferences,
   buildUserNotificationPreferencesValue,
+  scopedUserNotificationPreferencesForRole,
   validateNotificationTokenDeleteInput,
   validateNotificationTokenRegistrationInput,
   validateUserNotificationPreferencesInput,

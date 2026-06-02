@@ -209,7 +209,7 @@ test('users can only manage their own notification preferences and tokens', asyn
     updatedAt: now,
     updatedByUid: 'user-2',
   }));
-  await assertSucceeds(setDoc(doc(userDb('user-1'), 'users', 'user-1', 'notification_preferences', 'default'), {
+  await assertFails(setDoc(doc(userDb('user-1'), 'users', 'user-1', 'notification_preferences', 'default'), {
     ownerUid: 'user-1',
     bookingStatusEnabled: false,
     appointmentReminderEnabled: true,
@@ -218,6 +218,47 @@ test('users can only manage their own notification preferences and tokens', asyn
     marketingEnabled: false,
     updatedAt: now,
     updatedByUid: 'user-1',
+    updateSource: 'mobile-notifications',
+  }));
+  await assertSucceeds(setDoc(doc(userDb('user-1'), 'users', 'user-1', 'notification_preferences', 'default'), {
+    ownerUid: 'user-1',
+    bookingStatusEnabled: false,
+    appointmentReminderEnabled: true,
+    loyaltyEnabled: true,
+    adminPendingAlertEnabled: true,
+    marketingEnabled: false,
+    updatedAt: now,
+    updatedByUid: 'user-1',
+    updateSource: 'mobile-notifications',
+  }));
+  await assertFails(setDoc(doc(userDb('user-3'), 'users', 'user-3', 'notification_preferences', 'default'), {
+    ownerUid: 'user-3',
+    bookingStatusEnabled: true,
+    appointmentReminderEnabled: true,
+    loyaltyEnabled: true,
+    adminPendingAlertEnabled: true,
+    marketingEnabled: false,
+    updatedAt: now,
+    updatedByUid: 'user-3',
+  }));
+  await assertSucceeds(setDoc(doc(userDb('user-3'), 'users', 'user-3', 'notification_preferences', 'default'), {
+    ownerUid: 'user-3',
+    bookingStatusEnabled: true,
+    appointmentReminderEnabled: true,
+    loyaltyEnabled: true,
+    marketingEnabled: false,
+    updatedAt: now,
+    updatedByUid: 'user-3',
+  }));
+  await assertSucceeds(setDoc(doc(adminDb(), 'users', 'admin-1', 'notification_preferences', 'default'), {
+    ownerUid: 'admin-1',
+    bookingStatusEnabled: true,
+    appointmentReminderEnabled: true,
+    loyaltyEnabled: true,
+    adminPendingAlertEnabled: false,
+    marketingEnabled: false,
+    updatedAt: now,
+    updatedByUid: 'admin-1',
     updateSource: 'mobile-notifications',
   }));
 
