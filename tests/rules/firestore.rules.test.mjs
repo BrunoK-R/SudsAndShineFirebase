@@ -628,6 +628,38 @@ test('admin settings direct writes require safe settings and audit metadata', as
         index === 0 ? {...template, key: 'booking_accepted'} : template),
     },
   }));
+  await assertFails(setDoc(doc(adminDb(), 'admin_settings', 'notification_settings'), {
+    ...validNotifications,
+    value: {
+      ...validNotifications.value,
+      templates: validNotifications.value.templates.map((template, index) =>
+        index === 0 ? {...template, enabled: 'true'} : template),
+    },
+  }));
+  await assertFails(setDoc(doc(adminDb(), 'admin_settings', 'notification_settings'), {
+    ...validNotifications,
+    value: {
+      ...validNotifications.value,
+      templates: validNotifications.value.templates.map((template, index) =>
+        index === 0 ? {...template, title: ''} : template),
+    },
+  }));
+  await assertFails(setDoc(doc(adminDb(), 'admin_settings', 'notification_settings'), {
+    ...validNotifications,
+    value: {
+      ...validNotifications.value,
+      templates: validNotifications.value.templates.map((template, index) =>
+        index === 0 ? {...template, body: 'x'.repeat(501)} : template),
+    },
+  }));
+  await assertFails(setDoc(doc(adminDb(), 'admin_settings', 'notification_settings'), {
+    ...validNotifications,
+    value: {
+      ...validNotifications.value,
+      templates: validNotifications.value.templates.map((template, index) =>
+        index === 9 ? {...template, label: ''} : template),
+    },
+  }));
   await assertSucceeds(setDoc(doc(adminDb(), 'admin_settings', 'notification_settings'), validNotifications));
   await assertSucceeds(updateDoc(doc(adminDb(), 'admin_settings', 'notification_settings'), {
     value: {
