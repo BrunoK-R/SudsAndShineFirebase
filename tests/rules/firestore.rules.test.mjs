@@ -657,6 +657,22 @@ test('admin settings direct writes require safe settings and audit metadata', as
     value: {
       ...validNotifications.value,
       templates: validNotifications.value.templates.map((template, index) =>
+        index === 3 ? {...template, enabled: 'true'} : template),
+    },
+  }));
+  await assertFails(setDoc(doc(adminDb(), 'admin_settings', 'notification_settings'), {
+    ...validNotifications,
+    value: {
+      ...validNotifications.value,
+      templates: validNotifications.value.templates.map((template, index) =>
+        index === 4 ? {...template, title: ''} : template),
+    },
+  }));
+  await assertFails(setDoc(doc(adminDb(), 'admin_settings', 'notification_settings'), {
+    ...validNotifications,
+    value: {
+      ...validNotifications.value,
+      templates: validNotifications.value.templates.map((template, index) =>
         index === 5 ? {...template, enabled: 'true'} : template),
     },
   }));
@@ -666,6 +682,22 @@ test('admin settings direct writes require safe settings and audit metadata', as
       ...validNotifications.value,
       templates: validNotifications.value.templates.map((template, index) =>
         index === 6 ? {...template, title: ''} : template),
+    },
+  }));
+  await assertFails(setDoc(doc(adminDb(), 'admin_settings', 'notification_settings'), {
+    ...validNotifications,
+    value: {
+      ...validNotifications.value,
+      templates: validNotifications.value.templates.map((template, index) =>
+        index === 7 ? {...template, body: 'x'.repeat(501)} : template),
+    },
+  }));
+  await assertFails(setDoc(doc(adminDb(), 'admin_settings', 'notification_settings'), {
+    ...validNotifications,
+    value: {
+      ...validNotifications.value,
+      templates: validNotifications.value.templates.map((template, index) =>
+        index === 8 ? {...template, label: ''} : template),
     },
   }));
   await assertFails(setDoc(doc(adminDb(), 'admin_settings', 'notification_settings'), {
