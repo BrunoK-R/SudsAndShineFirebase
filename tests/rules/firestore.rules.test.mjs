@@ -1010,7 +1010,7 @@ test('capacity overrides are staff-readable and admin-writable only', async () =
   await assertFails(deleteDoc(doc(adminDb(), 'capacity_overrides', '2026-06-11')));
 });
 
-test('only staff can read and write reservation reviews directly', async () => {
+test('reservation reviews are staff-readable and callable-only for writes', async () => {
   await seedDoc('reservation_reviews', 'review-1', {
     reservationId: 'r-1',
     customerUid: 'uid-1',
@@ -1018,10 +1018,15 @@ test('only staff can read and write reservation reviews directly', async () => {
   });
 
   await assertSucceeds(getDoc(doc(staffDb(), 'reservation_reviews', 'review-1')));
-  await assertSucceeds(setDoc(doc(staffDb(), 'reservation_reviews', 'review-2'), {
+  await assertFails(setDoc(doc(staffDb(), 'reservation_reviews', 'review-2'), {
     reservationId: 'r-2',
     customerUid: 'uid-2',
     rating: 4,
+  }));
+  await assertFails(setDoc(doc(adminDb(), 'reservation_reviews', 'review-3'), {
+    reservationId: 'r-3',
+    customerUid: 'uid-3',
+    rating: 5,
   }));
 
   await assertFails(getDoc(doc(unauthDb(), 'reservation_reviews', 'review-1')));

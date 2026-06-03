@@ -950,7 +950,8 @@ service cloud.firestore {
     }
 
     match /reservation_reviews/{docId} {
-      allow read, write: if isStaff();
+      allow read: if isStaff();
+      allow write: if false;
     }
 
     match /notification_outbox/{docId} {
