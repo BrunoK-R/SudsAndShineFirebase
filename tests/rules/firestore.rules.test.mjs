@@ -797,6 +797,18 @@ test('users can only manage their own notification preferences and tokens', asyn
   await assertSucceeds(getDoc(doc(userDb('user-1'), 'users', 'user-1', 'notification_tokens', 'current-test-device')));
   await assertFails(getDoc(doc(userDb('user-2'), 'users', 'user-1', 'notification_tokens', 'current-test-device')));
   await assertFails(getDoc(doc(staffDb(), 'users', 'user-1', 'notification_tokens', 'current-test-device')));
+  const later = Timestamp.fromDate(new Date(Date.now() + 1000));
+  const validTokenPayload = {
+    ownerUid: 'user-1',
+    tokenId: 'token-22',
+    platform: 'ios',
+    token: 'test-token-for-current-device-2222222222',
+    enabled: true,
+    createdAt: now,
+    lastSeenAt: now,
+    updatedAt: now,
+    updateSource: 'mobile-notification-token',
+  };
   await assertFails(setDoc(doc(userDb('user-2'), 'users', 'user-1', 'notification_tokens', 'token-22'), {
     ownerUid: 'user-1',
     tokenId: 'token-22',
@@ -804,6 +816,24 @@ test('users can only manage their own notification preferences and tokens', asyn
     token: 'test-token-for-current-device-2222222222',
     enabled: true,
     createdAt: now,
+    updatedAt: now,
+  }));
+  await assertFails(setDoc(doc(userDb('user-1'), 'users', 'user-1', 'notification_tokens', 'token-22'), {
+    ...validTokenPayload,
+    updateSource: 'mobile-notifications',
+  }));
+  await assertFails(setDoc(doc(userDb('user-1'), 'users', 'user-1', 'notification_tokens', 'token-22'), {
+    ...validTokenPayload,
+    enabled: false,
+  }));
+  await assertFails(setDoc(doc(userDb('user-1'), 'users', 'user-1', 'notification_tokens', 'token-22'), {
+    ownerUid: 'user-1',
+    tokenId: 'token-22',
+    platform: 'ios',
+    token: 'test-token-for-current-device-2222222222',
+    enabled: true,
+    createdAt: now,
+    lastSeenAt: now,
     updatedAt: now,
   }));
   await assertFails(setDoc(doc(userDb('user-1'), 'users', 'user-1', 'notification_tokens', 'bad-owner'), {
@@ -860,13 +890,20 @@ test('users can only manage their own notification preferences and tokens', asyn
     updatedAt: now,
   }));
   await assertSucceeds(setDoc(doc(userDb('user-1'), 'users', 'user-1', 'notification_tokens', 'token-22'), {
-    ownerUid: 'user-1',
-    tokenId: 'token-22',
-    platform: 'ios',
-    token: 'test-token-for-current-device-2222222222',
-    enabled: true,
-    createdAt: now,
-    updatedAt: now,
+    ...validTokenPayload,
+  }));
+  await assertFails(setDoc(doc(userDb('user-1'), 'users', 'user-1', 'notification_tokens', 'token-22'), {
+    ...validTokenPayload,
+    createdAt: later,
+    lastSeenAt: later,
+    updatedAt: later,
+  }));
+  await assertSucceeds(setDoc(doc(userDb('user-1'), 'users', 'user-1', 'notification_tokens', 'token-22'), {
+    ...validTokenPayload,
+    deviceLabel: 'Pixel 8',
+    appVersion: '1.0.0-debug',
+    lastSeenAt: later,
+    updatedAt: later,
   }));
   await assertSucceeds(deleteDoc(doc(userDb('user-1'), 'users', 'user-1', 'notification_tokens', 'token-22')));
 });

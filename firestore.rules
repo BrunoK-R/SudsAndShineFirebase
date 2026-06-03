@@ -346,23 +346,36 @@ service cloud.firestore {
           'createdAt',
           'lastSeenAt',
           'updatedAt',
-          'revokedAt',
           'updateSource',
         ]) &&
-        request.resource.data.keys().hasAll(['ownerUid', 'tokenId', 'token', 'platform', 'enabled']) &&
+        request.resource.data.keys().hasAll([
+          'ownerUid',
+          'tokenId',
+          'token',
+          'platform',
+          'enabled',
+          'createdAt',
+          'lastSeenAt',
+          'updatedAt',
+          'updateSource',
+        ]) &&
         isNotificationTokenDocId(tokenDocId) &&
         request.resource.data.ownerUid == userId &&
         request.resource.data.tokenId == tokenDocId &&
         isNotificationTokenValue(request.resource.data.token) &&
         isNotificationTokenPlatform(request.resource.data.platform) &&
-        optionalBoolField('enabled') &&
+        request.resource.data.enabled == true &&
         optionalStringField('deviceLabel', 120) &&
         optionalStringField('appVersion', 64) &&
-        optionalTimestampField('createdAt') &&
-        optionalTimestampField('lastSeenAt') &&
-        optionalTimestampField('updatedAt') &&
-        optionalTimestampField('revokedAt') &&
-        optionalStringField('updateSource', 80);
+        request.resource.data.createdAt is timestamp &&
+        request.resource.data.lastSeenAt is timestamp &&
+        request.resource.data.updatedAt is timestamp &&
+        request.resource.data.updateSource == 'mobile-notification-token';
+    }
+
+    function notificationTokenCreatedAtPreserved() {
+      return !resource.data.keys().hasAny(['createdAt']) ||
+        request.resource.data.createdAt == resource.data.createdAt;
     }
 
     function isIntegerInRange(value, minValue, maxValue) {
@@ -988,7 +1001,10 @@ service cloud.firestore {
 
       match /notification_tokens/{docId} {
         allow read: if isOwner(userId);
-        allow create, update: if isOwner(userId) && isValidNotificationTokenWrite(userId, docId);
+        allow create: if isOwner(userId) && isValidNotificationTokenWrite(userId, docId);
+        allow update: if isOwner(userId) &&
+          isValidNotificationTokenWrite(userId, docId) &&
+          notificationTokenCreatedAtPreserved();
         allow delete: if isOwner(userId);
       }
 
