@@ -257,6 +257,8 @@ function buildNotificationCampaignDraftMutationReceipt({
     targetAudience,
     sendBlocked: true,
     sendBlockedReason: NOTIFICATION_CAMPAIGN_SEND_BLOCKED_REASON,
+    deliveryLocked: true,
+    sendState: NOTIFICATION_CAMPAIGN_SEND_STATE,
   };
 }
 
@@ -288,6 +290,8 @@ function normalizeNotificationCampaignDraft(docSnap) {
     sendBlockedReason: typeof data.sendBlockedReason === "string" && data.sendBlockedReason.trim() ?
       data.sendBlockedReason.trim() :
       NOTIFICATION_CAMPAIGN_SEND_BLOCKED_REASON,
+    deliveryLocked: true,
+    sendState: NOTIFICATION_CAMPAIGN_SEND_STATE,
     createdByUid: typeof data.createdByUid === "string" ? data.createdByUid.trim() : "",
     updatedByUid: typeof data.updatedByUid === "string" ? data.updatedByUid.trim() : "",
     archivedByUid: typeof data.archivedByUid === "string" ? data.archivedByUid.trim() : "",
@@ -320,6 +324,7 @@ module.exports = {
   NOTIFICATION_CAMPAIGN_DRAFTS_COLLECTION,
   NOTIFICATION_CAMPAIGNS_COLLECTION,
   NOTIFICATION_CAMPAIGN_SEND_BLOCKED_REASON,
+  NOTIFICATION_CAMPAIGN_SEND_STATE,
   buildAdminNotificationCampaignDrafts,
   buildNotificationCampaignDraftArchiveValue,
   buildNotificationCampaignDraftMutationReceipt,

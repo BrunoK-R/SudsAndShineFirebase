@@ -1,4 +1,8 @@
 const {buildNotificationSettings} = require("./notificationAdmin");
+const {
+  NOTIFICATION_CAMPAIGN_SEND_BLOCKED_REASON,
+  NOTIFICATION_CAMPAIGN_SEND_STATE,
+} = require("./notificationCampaigns");
 const {buildUserNotificationPreferences} = require("./notificationPreferences");
 
 const NOTIFICATION_OUTBOX_COLLECTION = "notification_outbox";
@@ -411,6 +415,9 @@ function buildAdminCampaignDraftTestNotificationOutboxDocument({
 
   const now = timestamp || new Date();
   const normalizedActorUid = cleanReservationText(actorUid, 128) || normalizedRecipientUid;
+  const targetAudience = cleanReservationText(campaign?.targetAudience, 80) || "test_users";
+  const sendBlockedReason =
+    cleanReservationText(campaign?.sendBlockedReason, 160) || NOTIFICATION_CAMPAIGN_SEND_BLOCKED_REASON;
   return {
     type: "admin_test_notification",
     templateKey: "campaign_draft",
@@ -439,10 +446,14 @@ function buildAdminCampaignDraftTestNotificationOutboxDocument({
       campaignId,
       title,
       body,
-      targetAudience: cleanReservationText(campaign?.targetAudience, 80) || "test_users",
+      targetAudience,
+      marketingConsentRequired: targetAudience === "marketing_opt_in_users" ||
+        campaign?.marketingConsentRequired === true,
       status: cleanReservationText(campaign?.status, 40) || "draft",
       sendBlocked: true,
-      sendBlockedReason: cleanReservationText(campaign?.sendBlockedReason, 160),
+      sendBlockedReason,
+      deliveryLocked: true,
+      sendState: NOTIFICATION_CAMPAIGN_SEND_STATE,
     },
     preferencesSnapshot: {
       adminTestOnly: true,

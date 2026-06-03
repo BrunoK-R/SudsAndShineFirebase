@@ -573,6 +573,11 @@ test("buildAdminCampaignDraftTestNotificationOutboxDocument queues campaign prev
   assert.equal(payload.testOnly, true);
   assert.equal(payload.targetScope, "self");
   assert.equal(payload.campaignSnapshot.targetAudience, "marketing_opt_in_users");
+  assert.equal(payload.campaignSnapshot.marketingConsentRequired, true);
+  assert.equal(payload.campaignSnapshot.sendBlocked, true);
+  assert.equal(payload.campaignSnapshot.sendBlockedReason, "campaign-send-not-implemented");
+  assert.equal(payload.campaignSnapshot.deliveryLocked, true);
+  assert.equal(payload.campaignSnapshot.sendState, "draft_only");
   assert.equal(payload.preferencesSnapshot.adminTestOnly, true);
   assert.equal(payload.preferencesSnapshot.campaignDraftTest, true);
   assert.equal(Object.hasOwn(payload, "token"), false);

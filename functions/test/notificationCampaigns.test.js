@@ -2,6 +2,7 @@ const test = require("node:test");
 const assert = require("node:assert/strict");
 const {
   NOTIFICATION_CAMPAIGN_SEND_BLOCKED_REASON,
+  NOTIFICATION_CAMPAIGN_SEND_STATE,
   buildAdminNotificationCampaignDrafts,
   buildNotificationCampaignDraftArchiveValue,
   buildNotificationCampaignDraftMutationReceipt,
@@ -206,6 +207,8 @@ test("buildNotificationCampaignDraftMutationReceipt reports blocked send state",
     targetAudience: "marketing_opt_in_users",
     sendBlocked: true,
     sendBlockedReason: NOTIFICATION_CAMPAIGN_SEND_BLOCKED_REASON,
+    deliveryLocked: true,
+    sendState: NOTIFICATION_CAMPAIGN_SEND_STATE,
   });
 });
 
@@ -248,6 +251,8 @@ test("buildAdminNotificationCampaignDrafts normalizes admin campaign list", () =
   assert.equal(result.campaigns[0].scheduledAtIso, "2026-06-02T09:00:00.000Z");
   assert.equal(result.campaigns[0].sendBlocked, true);
   assert.equal(result.campaigns[0].sendBlockedReason, NOTIFICATION_CAMPAIGN_SEND_BLOCKED_REASON);
+  assert.equal(result.campaigns[0].deliveryLocked, true);
+  assert.equal(result.campaigns[0].sendState, NOTIFICATION_CAMPAIGN_SEND_STATE);
   assert.equal(result.campaigns[0].createdAtIso, "2026-06-01T10:00:00.000Z");
   assert.equal(result.campaigns[0].createdByUid, "admin-created");
   assert.equal(result.campaigns[0].updatedAtIso, "2026-06-01T11:00:00.000Z");
