@@ -9,6 +9,7 @@ const {
   REVIEW_PROMPT_RESERVATION_STATUS_VALUES,
   adminNotificationOutboxDocId,
   buildAdminCampaignDraftTestNotificationOutboxDocument,
+  buildAdminNotificationTestResponse,
   buildAdminPendingBookingNotificationOutboxDocument,
   buildAdminTestNotificationOutboxDocument,
   buildLoyaltyRewardNotificationOutboxDocument,
@@ -581,6 +582,42 @@ test("buildAdminCampaignDraftTestNotificationOutboxDocument queues campaign prev
   assert.equal(payload.preferencesSnapshot.adminTestOnly, true);
   assert.equal(payload.preferencesSnapshot.campaignDraftTest, true);
   assert.equal(Object.hasOwn(payload, "token"), false);
+});
+
+test("buildAdminNotificationTestResponse exposes campaign lock metadata only", () => {
+  const notification = buildAdminCampaignDraftTestNotificationOutboxDocument({
+    campaign: {
+      campaignId: "summer-test",
+      title: "Oferta de teste",
+      body: "Mensagem segura para preview.",
+      targetAudience: "marketing_opt_in_users",
+      status: "draft",
+      sendBlockedReason: "campaign-send-not-implemented",
+    },
+    recipientUid: "admin-1",
+    actorUid: "admin-1",
+    timestamp: new Date("2026-06-01T08:05:00.000Z"),
+  });
+
+  const response = buildAdminNotificationTestResponse({
+    notification,
+    notificationId: "notification-1",
+    recipientUid: "admin-1",
+  });
+
+  assert.equal(response.notificationId, "notification-1");
+  assert.equal(response.templateKey, "campaign_draft");
+  assert.equal(response.campaignId, "summer-test");
+  assert.equal(response.recipientUid, "admin-1");
+  assert.equal(response.targetScope, "self");
+  assert.equal(response.testOnly, true);
+  assert.equal(response.targetAudience, "marketing_opt_in_users");
+  assert.equal(response.marketingConsentRequired, true);
+  assert.equal(response.sendBlocked, true);
+  assert.equal(response.sendBlockedReason, "campaign-send-not-implemented");
+  assert.equal(response.deliveryLocked, true);
+  assert.equal(response.sendState, "draft_only");
+  assert.equal(Object.hasOwn(response, "token"), false);
 });
 
 test("buildAdminTestNotificationOutboxDocument respects disabled settings", () => {

@@ -462,6 +462,31 @@ function buildAdminCampaignDraftTestNotificationOutboxDocument({
   };
 }
 
+function buildAdminNotificationTestResponse({
+  notification,
+  notificationId,
+  recipientUid,
+} = {}) {
+  const campaignSnapshot = notification?.campaignSnapshot || {};
+  return {
+    queued: true,
+    notificationId: cleanReservationText(notificationId, 160),
+    templateKey: cleanReservationText(notification?.templateKey, 80),
+    campaignId: cleanReservationText(notification?.campaignId, 80),
+    deliveryState: cleanReservationText(notification?.deliveryState, 40),
+    recipientUid: cleanReservationText(recipientUid, 128),
+    targetScope: cleanReservationText(notification?.targetScope, 40) || "self",
+    testOnly: notification?.testOnly === true || notification?.preferencesSnapshot?.adminTestOnly === true,
+    targetAudience: cleanReservationText(campaignSnapshot.targetAudience, 80),
+    marketingConsentRequired: campaignSnapshot.marketingConsentRequired === true,
+    sendBlocked: campaignSnapshot.sendBlocked === true,
+    sendBlockedReason: cleanReservationText(campaignSnapshot.sendBlockedReason, 160),
+    deliveryLocked: campaignSnapshot.deliveryLocked === true,
+    sendState: cleanReservationText(campaignSnapshot.sendState, 40),
+    message: "Test notification queued for the current admin user only",
+  };
+}
+
 function enqueueReservationNotification(tx, {
   db,
   templateKey,
@@ -581,6 +606,7 @@ module.exports = {
   REVIEW_PROMPT_RESERVATION_STATUS_VALUES,
   adminNotificationOutboxDocId,
   buildAdminCampaignDraftTestNotificationOutboxDocument,
+  buildAdminNotificationTestResponse,
   buildAdminPendingBookingNotificationOutboxDocument,
   buildAdminTestNotificationOutboxDocument,
   buildLoyaltyRewardNotificationOutboxDocument,

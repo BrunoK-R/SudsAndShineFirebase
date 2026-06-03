@@ -131,6 +131,7 @@ const {
   enqueueLoyaltyRewardNotification,
   enqueueReservationNotification,
   buildAdminCampaignDraftTestNotificationOutboxDocument,
+  buildAdminNotificationTestResponse,
   buildAdminTestNotificationOutboxDocument,
   isBookingReminderReservationDue,
   isReviewPromptReservationDue,
@@ -1739,17 +1740,11 @@ exports.sendAdminNotificationTest = onCall(async (request) => {
   const notificationRef = db.collection(NOTIFICATION_OUTBOX_COLLECTION).doc();
   await notificationRef.set(notification);
 
-  return {
-    queued: true,
+  return buildAdminNotificationTestResponse({
+    notification,
     notificationId: notificationRef.id,
-    templateKey: notification.templateKey,
-    campaignId: notification.campaignId || "",
-    deliveryState: notification.deliveryState,
     recipientUid,
-    targetScope: notification.targetScope || "self",
-    testOnly: notification.testOnly === true || notification.preferencesSnapshot?.adminTestOnly === true,
-    message: "Test notification queued for the current admin user only",
-  };
+  });
 });
 
 exports.upsertAdminNotificationCampaignDraft = onCall(async (request) => {
