@@ -696,6 +696,7 @@ test('users can only manage their own notification preferences and tokens', asyn
   });
 
   await assertSucceeds(getDoc(doc(userDb('user-1'), 'users', 'user-1', 'notification_preferences', 'default')));
+  await assertFails(getDoc(doc(userDb('user-1'), 'users', 'user-1', 'notification_preferences', 'other')));
   await assertFails(getDoc(doc(userDb('user-2'), 'users', 'user-1', 'notification_preferences', 'default')));
   await assertFails(setDoc(doc(userDb('user-2'), 'users', 'user-1', 'notification_preferences', 'default'), {
     ownerUid: 'user-1',
@@ -706,6 +707,27 @@ test('users can only manage their own notification preferences and tokens', asyn
     marketingEnabled: true,
     updatedAt: now,
     updatedByUid: 'user-2',
+    updateSource: 'mobile-notifications',
+  }));
+  await assertFails(setDoc(doc(userDb('user-1'), 'users', 'user-1', 'notification_preferences', 'other'), {
+    ownerUid: 'user-1',
+    bookingStatusEnabled: false,
+    appointmentReminderEnabled: false,
+    loyaltyEnabled: false,
+    marketingEnabled: false,
+    updatedAt: now,
+    updatedByUid: 'user-1',
+    updateSource: 'mobile-notifications',
+  }));
+  await assertFails(setDoc(doc(userDb('user-1'), 'users', 'user-1', 'notification_preferences', 'default'), {
+    ownerUid: 'user-1',
+    bookingStatusEnabled: false,
+    appointmentReminderEnabled: true,
+    loyaltyEnabled: true,
+    marketingEnabled: false,
+    updatedAt: now,
+    updatedByUid: 'user-1',
+    updateSource: 'mobile-notifications',
   }));
   await assertFails(setDoc(doc(userDb('user-1'), 'users', 'user-1', 'notification_preferences', 'default'), {
     ownerUid: 'user-1',
@@ -748,6 +770,7 @@ test('users can only manage their own notification preferences and tokens', asyn
     marketingEnabled: false,
     updatedAt: now,
     updatedByUid: 'user-3',
+    updateSource: 'mobile-notifications',
   }));
   await assertSucceeds(setDoc(doc(userDb('user-3'), 'users', 'user-3', 'notification_preferences', 'default'), {
     ownerUid: 'user-3',
@@ -757,6 +780,7 @@ test('users can only manage their own notification preferences and tokens', asyn
     marketingEnabled: false,
     updatedAt: now,
     updatedByUid: 'user-3',
+    updateSource: 'mobile-notifications',
   }));
   await assertSucceeds(setDoc(doc(adminDb(), 'users', 'admin-1', 'notification_preferences', 'default'), {
     ownerUid: 'admin-1',

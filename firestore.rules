@@ -290,8 +290,9 @@ service cloud.firestore {
         optionalStringField('notes', 2000);
     }
 
-    function isValidNotificationPreferenceWrite(userId) {
-      return request.resource.data.keys().hasOnly([
+    function isValidNotificationPreferenceWrite(userId, docId) {
+      return docId == 'default' &&
+        request.resource.data.keys().hasOnly([
           'ownerUid',
           'bookingStatusEnabled',
           'appointmentReminderEnabled',
@@ -302,16 +303,25 @@ service cloud.firestore {
           'updatedByUid',
           'updateSource',
         ]) &&
-        optionalOwnerField(userId) &&
-        optionalBoolField('bookingStatusEnabled') &&
-        optionalBoolField('appointmentReminderEnabled') &&
-        optionalBoolField('loyaltyEnabled') &&
+        request.resource.data.keys().hasAll([
+          'ownerUid',
+          'bookingStatusEnabled',
+          'appointmentReminderEnabled',
+          'loyaltyEnabled',
+          'marketingEnabled',
+          'updatedAt',
+          'updatedByUid',
+          'updateSource',
+        ]) &&
+        request.resource.data.ownerUid == userId &&
+        request.resource.data.bookingStatusEnabled is bool &&
+        request.resource.data.appointmentReminderEnabled is bool &&
+        request.resource.data.loyaltyEnabled is bool &&
         optionalBoolField('adminPendingAlertEnabled') &&
-        optionalBoolField('marketingEnabled') &&
-        optionalTimestampField('updatedAt') &&
-        optionalStringField('updatedByUid', 128) &&
-        optionalUserField('updatedByUid', userId) &&
-        optionalStringField('updateSource', 80);
+        request.resource.data.marketingEnabled is bool &&
+        request.resource.data.updatedAt is timestamp &&
+        request.resource.data.updatedByUid == userId &&
+        request.resource.data.updateSource == 'mobile-notifications';
     }
 
     function canCreateAdminPendingAlertPreference() {
@@ -966,14 +976,14 @@ service cloud.firestore {
       allow read, write: if false;
 
       match /notification_preferences/{docId} {
-        allow read: if isOwner(userId);
+        allow read: if isOwner(userId) && docId == 'default';
         allow create: if isOwner(userId) &&
-          isValidNotificationPreferenceWrite(userId) &&
+          isValidNotificationPreferenceWrite(userId, docId) &&
           canCreateAdminPendingAlertPreference();
         allow update: if isOwner(userId) &&
-          isValidNotificationPreferenceWrite(userId) &&
+          isValidNotificationPreferenceWrite(userId, docId) &&
           canUpdateAdminPendingAlertPreference();
-        allow delete: if isOwner(userId);
+        allow delete: if isOwner(userId) && docId == 'default';
       }
 
       match /notification_tokens/{docId} {
