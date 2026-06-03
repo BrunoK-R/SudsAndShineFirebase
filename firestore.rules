@@ -38,6 +38,11 @@ service cloud.firestore {
         value.matches('^[^@\\s]+@[^@\\s]+\\.[^@\\s]+$');
     }
 
+    function isEmailDocumentId(value) {
+      return isShortString(value, 5, 320) &&
+        value.matches('^[^/@\\s]+@[^/@\\s]+\\.[^/@\\s]+$');
+    }
+
     function isMailtoUri(value) {
       return isShortString(value, 8, 327) &&
         value.matches('^mailto:[^@\\s]+@[^@\\s]+\\.[^@\\s]+$');
@@ -138,6 +143,48 @@ service cloud.firestore {
           !request.resource.data.keys().hasAny(['archivedAt', 'archivedByUid'])) &&
         optionalTimestampField('archivedAt') &&
         optionalStringField('archivedByUid', 128);
+    }
+
+    function isSafeUid(value) {
+      return value is string &&
+        value.size() >= 1 &&
+        value.size() <= 128 &&
+        value.matches('^[^/\\s]+$');
+    }
+
+    function optionalSafeUidField(key) {
+      return !request.resource.data.keys().hasAny([key]) ||
+        isSafeUid(request.resource.data[key]);
+    }
+
+    function isValidAdminAllowlistWrite(docId) {
+      return request.resource != null &&
+        isEmailDocumentId(docId) &&
+        request.resource.data.keys().hasOnly([
+          'uid',
+          'email',
+          'role',
+          'updatedAt',
+          'updatedByUid',
+          'lastSyncedAt',
+          'updateSource',
+        ]) &&
+        request.resource.data.keys().hasAll([
+          'email',
+          'role',
+          'updatedAt',
+          'updatedByUid',
+          'updateSource',
+        ]) &&
+        request.resource.data.email == docId &&
+        request.resource.data.email is string &&
+        isEmailAddress(request.resource.data.email) &&
+        request.resource.data.role in ['admin', 'employee'] &&
+        request.resource.data.updatedAt is timestamp &&
+        request.resource.data.updatedByUid == request.auth.uid &&
+        request.resource.data.updateSource == 'admin-mobile-admin-roles' &&
+        optionalSafeUidField('uid') &&
+        optionalTimestampField('lastSyncedAt');
     }
 
     function isValidServiceCatalogWrite(docId) {
@@ -903,7 +950,9 @@ service cloud.firestore {
     }
 
     match /admin_allowlist/{docId} {
-      allow read, write: if isAdmin();
+      allow read: if isAdmin();
+      allow create, update: if isAdmin() && isValidAdminAllowlistWrite(docId);
+      allow delete: if false;
     }
 
     match /services/{docId} {

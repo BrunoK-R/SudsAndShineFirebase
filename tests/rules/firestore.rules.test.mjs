@@ -47,6 +47,22 @@ function userDb(uid) {
   return testEnv.authenticatedContext(uid, {}).firestore();
 }
 
+function validAdminAllowlistPayload({
+  email = 'admin@example.com',
+  role = 'admin',
+  uid = 'target-admin-uid',
+  now = Timestamp.fromDate(new Date()),
+} = {}) {
+  return {
+    uid,
+    email,
+    role,
+    updatedAt: now,
+    updatedByUid: 'admin-1',
+    updateSource: 'admin-mobile-admin-roles',
+  };
+}
+
 function validReservationPayload() {
   const now = Timestamp.fromDate(new Date());
   return {
@@ -359,6 +375,59 @@ test('service extras are admin-only for direct clients', async () => {
     updatedByUid: 'admin-1',
   }));
   await assertFails(deleteDoc(doc(adminDb(), 'service_extras', 'admin-extra')));
+});
+
+test('admin allowlist direct writes require admin role, safe shape, and audit metadata', async () => {
+  const now = Timestamp.fromDate(new Date());
+  const validAllowlist = validAdminAllowlistPayload({now});
+
+  await seedDoc('admin_allowlist', 'admin@example.com', {
+    email: 'admin@example.com',
+    role: 'admin',
+  });
+
+  await assertFails(getDoc(doc(unauthDb(), 'admin_allowlist', 'admin@example.com')));
+  await assertFails(getDoc(doc(staffDb(), 'admin_allowlist', 'admin@example.com')));
+  await assertFails(setDoc(doc(staffDb(), 'admin_allowlist', 'staff@example.com'), validAllowlist));
+  await assertSucceeds(getDoc(doc(adminDb(), 'admin_allowlist', 'admin@example.com')));
+  await assertFails(setDoc(doc(adminDb(), 'admin_allowlist', 'admin@example.com'), {
+    email: 'admin@example.com',
+    role: 'owner',
+  }));
+  await assertFails(setDoc(doc(adminDb(), 'admin_allowlist', 'bad email'), {
+    ...validAllowlist,
+    email: 'bad email',
+  }));
+  await assertFails(setDoc(doc(adminDb(), 'admin_allowlist', 'admin@example.com'), {
+    ...validAllowlist,
+    email: 'other@example.com',
+  }));
+  await assertFails(setDoc(doc(adminDb(), 'admin_allowlist', 'admin@example.com'), {
+    ...validAllowlist,
+    updatedByUid: 'other-admin',
+  }));
+  await assertFails(setDoc(doc(adminDb(), 'admin_allowlist', 'admin@example.com'), {
+    ...validAllowlist,
+    updateSource: 'console',
+  }));
+  await assertFails(setDoc(doc(adminDb(), 'admin_allowlist', 'admin@example.com'), {
+    ...validAllowlist,
+    internalNote: 'not allowed',
+  }));
+  await assertSucceeds(setDoc(doc(adminDb(), 'admin_allowlist', 'admin@example.com'), validAllowlist));
+  await assertSucceeds(updateDoc(doc(adminDb(), 'admin_allowlist', 'admin@example.com'), {
+    role: 'employee',
+    updatedAt: now,
+    updatedByUid: 'admin-1',
+    updateSource: 'admin-mobile-admin-roles',
+  }));
+  await assertFails(updateDoc(doc(adminDb(), 'admin_allowlist', 'admin@example.com'), {
+    uid: 'bad/path',
+    updatedAt: now,
+    updatedByUid: 'admin-1',
+    updateSource: 'admin-mobile-admin-roles',
+  }));
+  await assertFails(deleteDoc(doc(adminDb(), 'admin_allowlist', 'admin@example.com')));
 });
 
 test('employee can write portfolio while public cannot', async () => {
