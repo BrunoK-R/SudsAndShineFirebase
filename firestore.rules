@@ -552,6 +552,8 @@ service cloud.firestore {
         isNotificationTemplateKeyAt(values, 8, 'loyalty_reward') &&
         isNotificationTemplateKeyAt(values, 9, 'admin_pending_booking') &&
         isValidNotificationTemplate(values[0], 'booking_request') &&
+        isValidNotificationTemplate(values[1], 'booking_accepted') &&
+        isValidNotificationTemplate(values[2], 'booking_rejected') &&
         isValidNotificationTemplate(values[5], 'booking_rescheduled') &&
         isValidNotificationTemplate(values[6], 'booking_reminder') &&
         isValidNotificationTemplate(values[9], 'admin_pending_booking');
