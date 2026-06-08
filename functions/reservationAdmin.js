@@ -8,7 +8,8 @@ const {
 const {timestampToIso} = require("./reservationHistory");
 
 const ADMIN_PENDING_RESERVATION_LIMIT = 100;
-const ADMIN_COMPLETABLE_RESERVATION_LIMIT = 100;
+const ADMIN_ACCEPTED_RESERVATION_LIMIT = 100;
+const ADMIN_COMPLETABLE_RESERVATION_LIMIT = ADMIN_ACCEPTED_RESERVATION_LIMIT;
 const MAX_REJECTION_REASON_LENGTH = 500;
 const COMPLETABLE_RESERVATION_STATUS_VALUES = [
   "confirmed",
@@ -159,7 +160,7 @@ function normalizeAdminPendingReservationDocument(doc, servicesById, now = new D
   };
 }
 
-function normalizeAdminCompletableReservationDocument(doc, servicesById, now = new Date()) {
+function normalizeAdminAcceptedReservationDocument(doc, servicesById, now = new Date()) {
   if (!doc?.exists) return null;
 
   const data = doc.data();
@@ -169,7 +170,7 @@ function normalizeAdminCompletableReservationDocument(doc, servicesById, now = n
   if (!COMPLETABLE_RESERVATION_STATUS_VALUES.includes(status)) return null;
 
   const slotEndDate = parseReservationSlotEnd(data);
-  if (!slotEndDate || slotEndDate > now) return null;
+  if (!slotEndDate) return null;
 
   const slotStart = String(data.slotStart || "").trim();
   const slotEnd = String(data.slotEnd || "").trim();
@@ -201,6 +202,7 @@ function normalizeAdminCompletableReservationDocument(doc, servicesById, now = n
     createdAt: timestampToIso(data.createdAt),
     pendingExpiresAt: timestampToIso(data.pendingExpiresAt),
     loyaltyRewardApplied: data.loyaltyRewardApplied === true,
+    canComplete: slotEndDate <= now,
     ...reservationDecisionAudit(data),
   };
 }
@@ -222,21 +224,29 @@ function buildAdminPendingReservations({
   return {requests};
 }
 
-function buildAdminCompletableReservations({
+function buildAdminAcceptedReservations({
   reservationDocs,
   serviceDocs,
   now = new Date(),
-  limit = ADMIN_COMPLETABLE_RESERVATION_LIMIT,
+  limit = ADMIN_ACCEPTED_RESERVATION_LIMIT,
 }) {
   const catalog = buildServiceCatalog(serviceDocs || []);
   const servicesById = new Map(catalog.services.map((service) => [service.id, service]));
   const requests = (reservationDocs || [])
-    .map((doc) => normalizeAdminCompletableReservationDocument(doc, servicesById, now))
+    .map((doc) => normalizeAdminAcceptedReservationDocument(doc, servicesById, now))
     .filter(Boolean)
     .sort((left, right) => left.slotStart.localeCompare(right.slotStart))
     .slice(0, limit);
 
   return {requests};
+}
+
+function buildAdminCompletableReservations(options) {
+  return buildAdminAcceptedReservations(options);
+}
+
+function normalizeAdminCompletableReservationDocument(doc, servicesById, now = new Date()) {
+  return normalizeAdminAcceptedReservationDocument(doc, servicesById, now);
 }
 
 function assertPendingReservationActionable({reservationSnap, now = new Date()}) {
@@ -284,6 +294,7 @@ function assertReservationCompletable({reservationSnap, now = new Date()}) {
 }
 
 module.exports = {
+  ADMIN_ACCEPTED_RESERVATION_LIMIT,
   ADMIN_COMPLETABLE_RESERVATION_LIMIT,
   ADMIN_PENDING_RESERVATION_LIMIT,
   COMPLETABLE_RESERVATION_STATUS_VALUES,
@@ -293,8 +304,10 @@ module.exports = {
   assertPendingReservationActionable,
   assertReservationCompletable,
   assertReservationId,
+  buildAdminAcceptedReservations,
   buildAdminCompletableReservations,
   buildAdminPendingReservations,
+  normalizeAdminAcceptedReservationDocument,
   normalizeAdminCompletableReservationDocument,
   normalizeAdminPendingReservationDocument,
   normalizeRejectionReason,

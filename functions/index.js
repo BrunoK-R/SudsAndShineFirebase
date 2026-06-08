@@ -82,7 +82,7 @@ const {
 const {
   assertPendingReservationActionable,
   assertReservationCompletable,
-  buildAdminCompletableReservations,
+  buildAdminAcceptedReservations,
   buildAdminPendingReservations,
   validateAdminReservationActionInput,
 } = require("./reservationAdmin");
@@ -1490,7 +1490,7 @@ exports.getAdminPendingReservations = onCall(async (request) => {
   });
 });
 
-exports.getAdminCompletableReservations = onCall(async (request) => {
+async function getAdminAcceptedReservationsForRequest(request) {
   await assertAdminRequest(request);
 
   const [servicesSnap, reservationsSnap] = await Promise.all([
@@ -1500,10 +1500,18 @@ exports.getAdminCompletableReservations = onCall(async (request) => {
       .get(),
   ]);
 
-  return buildAdminCompletableReservations({
+  return buildAdminAcceptedReservations({
     reservationDocs: reservationsSnap.docs,
     serviceDocs: servicesSnap.docs,
   });
+}
+
+exports.getAdminAcceptedReservations = onCall(async (request) => {
+  return getAdminAcceptedReservationsForRequest(request);
+});
+
+exports.getAdminCompletableReservations = onCall(async (request) => {
+  return getAdminAcceptedReservationsForRequest(request);
 });
 
 exports.getAdminBusinessInfo = onCall(async (request) => {

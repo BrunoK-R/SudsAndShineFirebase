@@ -5,9 +5,9 @@ const DEFAULT_BUSINESS_INFO = {
   phoneUri: "tel:913005855",
   email: "info@sudsshine.pt",
   emailUri: "mailto:info@sudsshine.pt",
-  addressLine1: "Shopping Norte Sul, Piso -1",
+  addressLine1: "Rua Virgílio Vieira da Cunha, R. Pte. das Mestras, 2400-447",
   addressLine2: "Leiria, Portugal",
-  mapsUri: "https://www.google.com/maps/search/?api=1&query=Shopping+Norte+Sul+Leiria",
+  mapsUri: "https://www.google.com/maps/search/?api=1&query=Suds%20%26%20Shine%20Solutions%2C%20Rua%20Virg%C3%ADlio%20Vieira%20da%20Cunha%2C%20R.%20Pte.%20das%20Mestras%2C%202400-447%20Leiria",
   whatsappUri: "https://wa.me/351913005855",
   openingHours: [
     {dayLabel: "Segunda a Sexta", hoursLabel: "09:00 - 19:00", closed: false},
@@ -37,7 +37,7 @@ const DEFAULT_BUSINESS_INFO = {
     },
     {
       question: "Onde estão localizados?",
-      answer: "Estamos localizados no Shopping Norte Sul, Piso -1, em Leiria. Temos estacionamento gratuito e fácil acesso.",
+      answer: "Estamos localizados no Shopping NorteSul, Piso -1, na Rua Virgílio Vieira da Cunha, R. Pte. das Mestras, em Leiria. Temos estacionamento gratuito e fácil acesso.",
     },
   ],
   stats: [

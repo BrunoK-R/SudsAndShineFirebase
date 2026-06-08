@@ -2,6 +2,7 @@ const assert = require("node:assert/strict");
 const test = require("node:test");
 const {
   assertAdminRole,
+  buildAdminAcceptedReservations,
   buildAdminCompletableReservations,
   assertPendingReservationActionable,
   assertReservationCompletable,
@@ -95,8 +96,8 @@ test("buildAdminPendingReservations returns only active pending requests sorted 
   assert.equal(requests[1].notes, "Portão lateral");
 });
 
-test("buildAdminCompletableReservations returns past confirmed jobs sorted by slot", () => {
-  const requests = buildAdminCompletableReservations({
+test("buildAdminAcceptedReservations returns accepted jobs sorted by slot", () => {
+  const requests = buildAdminAcceptedReservations({
     now: new Date("2026-05-20T12:00:00.000Z"),
     serviceDocs: [
       doc("premium", {
@@ -146,12 +147,35 @@ test("buildAdminCompletableReservations returns past confirmed jobs sorted by sl
     ],
   }).requests;
 
-  assert.deepEqual(requests.map((item) => item.id), ["earlier", "later"]);
+  assert.deepEqual(requests.map((item) => item.id), ["earlier", "later", "future"]);
   assert.equal(requests[0].status, "confirmed");
+  assert.equal(requests[0].canComplete, true);
   assert.equal(requests[1].status, "in_progress");
+  assert.equal(requests[1].canComplete, true);
   assert.equal(requests[1].priceCents, 4900);
   assert.equal(requests[1].acceptedAt, "2026-05-19T18:30:00.000Z");
   assert.equal(requests[1].acceptedByUid, "admin-uid");
+  assert.equal(requests[2].status, "confirmed");
+  assert.equal(requests[2].canComplete, false);
+});
+
+test("buildAdminCompletableReservations returns accepted jobs for legacy callers", () => {
+  const requests = buildAdminCompletableReservations({
+    now: new Date("2026-05-20T12:00:00.000Z"),
+    serviceDocs: [],
+    reservationDocs: [
+      doc("future", {
+        serviceId: "premium",
+        slotStart: "2026-05-20T12:30:00.000Z",
+        slotEnd: "2026-05-20T13:15:00.000Z",
+        status: "confirmed",
+        vehicleType: "passageiros",
+      }),
+    ],
+  }).requests;
+
+  assert.deepEqual(requests.map((item) => item.id), ["future"]);
+  assert.equal(requests[0].canComplete, false);
 });
 
 test("assertPendingReservationActionable rejects expired and non-pending requests", () => {

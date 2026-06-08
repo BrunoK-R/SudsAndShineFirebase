@@ -23,7 +23,7 @@ test("buildBusinessInfo returns defaults when Firestore setting is missing", () 
 
   assert.equal(info.source, "default");
   assert.equal(info.phone, DEFAULT_BUSINESS_INFO.phone);
-  assert.equal(info.addressLine1, "Shopping Norte Sul, Piso -1");
+  assert.equal(info.addressLine1, "Rua Virgílio Vieira da Cunha, R. Pte. das Mestras, 2400-447");
   assert.equal(info.openingHours.length, 3);
   assert.equal(info.faq.length, 6);
 });
