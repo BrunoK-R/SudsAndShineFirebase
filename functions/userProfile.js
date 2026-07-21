@@ -2,6 +2,7 @@ const {HttpsError} = require("firebase-functions/v2/https");
 
 const MAX_DISPLAY_NAME_LENGTH = 100;
 const MAX_PHONE_LENGTH = 32;
+const MAX_PROFILE_PHOTO_URL_LENGTH = 2048;
 const PHONE_PATTERN = /^[0-9+\-().\s]{6,32}$/;
 
 function normalizeRequiredText(value, fieldName, maxLength) {
@@ -51,12 +52,17 @@ function normalizeUserProfile({uid, authToken = {}, userData = {}}) {
     userData.phoneNumber || authToken.phone_number,
     MAX_PHONE_LENGTH,
   );
+  const photoUrl = normalizeOptionalText(
+    userData.photoUrl,
+    MAX_PROFILE_PHOTO_URL_LENGTH,
+  );
 
   return {
     uid,
     email,
     displayName,
     phoneNumber,
+    photoUrl,
     marketingOptIn: userData.marketingOptIn === true,
     appointmentReminderOptIn: userData.appointmentReminderOptIn === true,
   };

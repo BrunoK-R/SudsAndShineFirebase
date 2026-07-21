@@ -21,6 +21,7 @@ test("buildUserProfile falls back to auth token fields", () => {
     email: "bruno@example.com",
     displayName: "Bruno Ribeiro",
     phoneNumber: "+351 913 005 855",
+    photoUrl: "",
     marketingOptIn: false,
     appointmentReminderOptIn: false,
   });
@@ -37,6 +38,7 @@ test("buildUserProfile prefers stored profile data", () => {
       email: "stored@example.com",
       displayName: "Stored Name",
       phoneNumber: "913005855",
+      photoUrl: " https://cdn.example.com/profile.jpg ",
       marketingOptIn: true,
       appointmentReminderOptIn: true,
     }),
@@ -45,6 +47,7 @@ test("buildUserProfile prefers stored profile data", () => {
   assert.equal(result.profile.email, "stored@example.com");
   assert.equal(result.profile.displayName, "Stored Name");
   assert.equal(result.profile.phoneNumber, "913005855");
+  assert.equal(result.profile.photoUrl, "https://cdn.example.com/profile.jpg");
   assert.equal(result.profile.marketingOptIn, true);
   assert.equal(result.profile.appointmentReminderOptIn, true);
 });

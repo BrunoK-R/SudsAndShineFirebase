@@ -16,6 +16,8 @@ Do not deploy production functions from the sibling mobile app repository. The a
   - `createReservation` callable with transactional conflict checks
   - `getAvailability` callable for public month availability derived from capacity, reservations, and blocked slots
   - `getMyReservations` callable for authenticated user booking history from owned/legacy email reservations, including additive `paymentStatus` metadata for app payment surfaces
+  - `getMyProfile` and `updateMyProfile` callables for authenticated customer profile management
+  - `updateMyProfilePhoto` callable for validated, owner-scoped profile photo upload and removal
   - `assignAdminRole` callable for allowlist/claim assignment
   - `syncMyRole` callable to assign claims from `admin_allowlist` for authenticated users
   - `health` HTTP endpoint

@@ -85,3 +85,29 @@ test('staff cannot upload non-image or write outside portfolio path', async () =
     {contentType: 'image/jpeg'},
   ));
 });
+
+test('profile photo is readable only by its owner', async () => {
+  const ownerUid = 'profile-owner-1';
+  const filePath = `user-profile/${ownerUid}/avatar/avatar-${Date.now()}.jpg`;
+  await seedFile(filePath, Buffer.from('profile-photo'), 'image/jpeg');
+
+  const ownerStorage = asStorage(testEnv.authenticatedContext(ownerUid));
+  const otherStorage = asStorage(testEnv.authenticatedContext('profile-other-1'));
+  const publicStorage = asStorage(testEnv.unauthenticatedContext());
+
+  await assertSucceeds(getBytes(ref(ownerStorage, filePath)));
+  await assertFails(getBytes(ref(otherStorage, filePath)));
+  await assertFails(getBytes(ref(publicStorage, filePath)));
+});
+
+test('clients cannot write profile photos directly', async () => {
+  const ownerUid = 'profile-owner-2';
+  const ownerStorage = asStorage(testEnv.authenticatedContext(ownerUid));
+  const filePath = `user-profile/${ownerUid}/avatar/direct-${Date.now()}.jpg`;
+
+  await assertFails(uploadBytes(
+    ref(ownerStorage, filePath),
+    Buffer.from('profile-photo'),
+    {contentType: 'image/jpeg'},
+  ));
+});

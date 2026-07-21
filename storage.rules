@@ -15,6 +15,10 @@ service firebase.storage {
       return request.auth != null;
     }
 
+    function isOwner(userId) {
+      return isSignedIn() && request.auth.uid == userId;
+    }
+
     function hasRole(role) {
       return isSignedIn() && request.auth.token.role == role;
     }
@@ -35,6 +39,12 @@ service firebase.storage {
       allow read: if true;
       allow create, update: if isStaff() && isImageUpload() && isAllowedUploadSize();
       allow delete: if isStaff();
+    }
+
+    match /user-profile/{userId}/avatar/{fileName} {
+      allow read: if isOwner(userId) &&
+        fileName.matches('^[A-Za-z0-9_-]{1,128}\\.jpg$');
+      allow write: if false;
     }
 
     match /{allPaths=**} {

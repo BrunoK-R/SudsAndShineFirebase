@@ -1,4 +1,5 @@
 const admin = require("firebase-admin");
+const crypto = require("node:crypto");
 const {setGlobalOptions, logger} = require("firebase-functions/v2");
 const {onCall, onRequest, HttpsError} = require("firebase-functions/v2/https");
 const {onSchedule} = require("firebase-functions/v2/scheduler");
@@ -63,6 +64,12 @@ const {
   buildUserProfile,
   validateUserProfilePayload,
 } = require("./userProfile");
+const {
+  isManagedProfilePhotoStoragePath,
+  profilePhotoDownloadUrl,
+  profilePhotoStoragePath,
+  validateProfilePhotoMutationPayload,
+} = require("./profilePhoto");
 const {
   assertReservationReviewable,
   buildReservationReviewDocument,
@@ -370,6 +377,20 @@ function redeemReservedLoyaltyReward(tx, reservationData, reservationId) {
 
 function userDocument(uid) {
   return db.collection("users").doc(uid);
+}
+
+async function deleteManagedProfilePhotoObject(bucket, uid, storagePath, reason) {
+  if (!isManagedProfilePhotoStoragePath(uid, storagePath)) return;
+  try {
+    await bucket.file(storagePath).delete({ignoreNotFound: true});
+  } catch (error) {
+    logger.warn("Profile photo object cleanup failed", {
+      uid,
+      storagePath,
+      reason,
+      message: error?.message,
+    });
+  }
 }
 
 function reservationVehicleTypeForComparison(vehicleType) {
@@ -1297,6 +1318,98 @@ exports.updateMyProfile = onCall(async (request) => {
       message: err?.message,
     });
   });
+
+  const updatedSnap = await userRef.get();
+  return buildUserProfile({
+    uid,
+    authToken: request.auth?.token || {},
+    userDoc: updatedSnap,
+  });
+});
+
+exports.updateMyProfilePhoto = onCall(async (request) => {
+  const uid = assertAuthenticatedUid(request);
+  const mutation = validateProfilePhotoMutationPayload(request.data);
+  const userRef = userDocument(uid);
+  const userSnap = await userRef.get();
+  const previousStoragePath = String(userSnap.get("profilePhotoStoragePath") || "").trim();
+  const now = admin.firestore.FieldValue.serverTimestamp();
+  const email = String(request.auth?.token?.email || "").trim().toLowerCase();
+  const bucket = admin.storage().bucket();
+  const auditFields = {
+    uid,
+    email,
+    source: "mobile-app",
+    createdAt: userSnap.exists ? userSnap.get("createdAt") || now : now,
+    updatedAt: now,
+    profilePhotoUpdatedAt: now,
+  };
+
+  if (mutation.remove) {
+    try {
+      await userRef.set(
+        {
+          ...auditFields,
+          photoUrl: "",
+          profilePhotoStoragePath: admin.firestore.FieldValue.delete(),
+        },
+        {merge: true},
+      );
+    } catch (error) {
+      logger.error("Profile photo removal metadata update failed", {
+        uid,
+        message: error?.message,
+      });
+      throw new HttpsError("unavailable", "Profile photo could not be removed");
+    }
+    await deleteManagedProfilePhotoObject(bucket, uid, previousStoragePath, "profile-photo-remove");
+  } else {
+    const objectId = crypto.randomUUID();
+    const downloadToken = crypto.randomUUID();
+    const storagePath = profilePhotoStoragePath(uid, objectId);
+    const photoUrl = profilePhotoDownloadUrl({
+      bucketName: bucket.name,
+      storagePath,
+      downloadToken,
+    });
+    const file = bucket.file(storagePath);
+    let uploadCompleted = false;
+    try {
+      await file.save(mutation.imageBytes, {
+        resumable: false,
+        validation: "crc32c",
+        metadata: {
+          contentType: mutation.mimeType,
+          cacheControl: "private, max-age=3600",
+          metadata: {
+            firebaseStorageDownloadTokens: downloadToken,
+            ownerUid: uid,
+          },
+        },
+      });
+      uploadCompleted = true;
+      await userRef.set(
+        {
+          ...auditFields,
+          photoUrl,
+          profilePhotoStoragePath: storagePath,
+        },
+        {merge: true},
+      );
+    } catch (error) {
+      if (uploadCompleted) {
+        await deleteManagedProfilePhotoObject(bucket, uid, storagePath, "profile-photo-rollback");
+      }
+      logger.error("Profile photo upload failed", {
+        uid,
+        message: error?.message,
+      });
+      throw new HttpsError("unavailable", "Profile photo could not be saved");
+    }
+    if (previousStoragePath !== storagePath) {
+      await deleteManagedProfilePhotoObject(bucket, uid, previousStoragePath, "profile-photo-replace");
+    }
+  }
 
   const updatedSnap = await userRef.get();
   return buildUserProfile({
