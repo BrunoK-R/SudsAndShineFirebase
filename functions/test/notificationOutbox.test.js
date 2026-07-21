@@ -13,7 +13,9 @@ const {
   buildAdminPendingBookingNotificationOutboxDocument,
   buildAdminTestNotificationOutboxDocument,
   buildLoyaltyRewardNotificationOutboxDocument,
+  buildNotificationCampaignBroadcastOutboxDocument,
   buildReservationNotificationOutboxDocument,
+  campaignNotificationOutboxDocId,
   enqueueAdminPendingBookingNotification,
   enqueueLoyaltyRewardNotification,
   enqueueReservationNotification,
@@ -578,9 +580,44 @@ test("buildAdminCampaignDraftTestNotificationOutboxDocument queues campaign prev
   assert.equal(payload.campaignSnapshot.sendBlocked, true);
   assert.equal(payload.campaignSnapshot.sendBlockedReason, "campaign-send-not-implemented");
   assert.equal(payload.campaignSnapshot.deliveryLocked, true);
-  assert.equal(payload.campaignSnapshot.sendState, "draft_only");
+  assert.equal(payload.campaignSnapshot.sendState, "ready");
   assert.equal(payload.preferencesSnapshot.adminTestOnly, true);
   assert.equal(payload.preferencesSnapshot.campaignDraftTest, true);
+  assert.equal(Object.hasOwn(payload, "token"), false);
+});
+
+test("buildNotificationCampaignBroadcastOutboxDocument queues campaign broadcast without token exposure", () => {
+  const payload = buildNotificationCampaignBroadcastOutboxDocument({
+    campaign: {
+      campaignId: "summer-test",
+      title: "Oferta de verão",
+      body: "Mensagem para clientes.",
+      targetAudience: "all_users",
+      status: "draft",
+      marketingConsentRequired: false,
+    },
+    recipientUid: "user-1",
+    actorUid: "admin-1",
+    timestamp: new Date("2026-06-01T08:10:00.000Z"),
+  });
+
+  assert.equal(campaignNotificationOutboxDocId("summer-test", "user-1"), "campaign_draft_summer-test_user-1");
+  assert.equal(payload.type, "campaign_broadcast");
+  assert.equal(payload.templateKey, "campaign_draft");
+  assert.equal(payload.campaignId, "summer-test");
+  assert.equal(payload.recipientUid, "user-1");
+  assert.equal(payload.title, "Oferta de verão");
+  assert.equal(payload.body, "Mensagem para clientes.");
+  assert.equal(payload.testOnly, false);
+  assert.equal(payload.targetScope, "marketing_opt_in_users");
+  assert.equal(payload.dedupeKey, "campaign_broadcast:summer-test:user-1");
+  assert.equal(payload.source, "admin-campaign-broadcast");
+  assert.equal(payload.campaignSnapshot.marketingConsentRequired, true);
+  assert.equal(payload.campaignSnapshot.sendBlocked, false);
+  assert.equal(payload.campaignSnapshot.deliveryLocked, false);
+  assert.equal(payload.campaignSnapshot.sendState, "ready");
+  assert.equal(payload.preferencesSnapshot.campaignBroadcast, true);
+  assert.equal(payload.preferencesSnapshot.marketingConsentRequired, true);
   assert.equal(Object.hasOwn(payload, "token"), false);
 });
 
@@ -616,7 +653,7 @@ test("buildAdminNotificationTestResponse exposes campaign lock metadata only", (
   assert.equal(response.sendBlocked, true);
   assert.equal(response.sendBlockedReason, "campaign-send-not-implemented");
   assert.equal(response.deliveryLocked, true);
-  assert.equal(response.sendState, "draft_only");
+  assert.equal(response.sendState, "ready");
   assert.equal(Object.hasOwn(response, "token"), false);
 });
 

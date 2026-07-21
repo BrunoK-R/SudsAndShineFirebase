@@ -1,6 +1,8 @@
 # SudsAndShine Firebase Workspace
 
-This repository contains the Firebase-first infrastructure and Cloud Functions baseline for the Suds & Shine migration.
+This repository is the canonical production Firebase backend for Suds & Shine. Its Cloud Functions, Firestore rules and indexes, and Storage rules are shared by the mobile app and website.
+
+Do not deploy production functions from the sibling mobile app repository. The app keeps a legacy functions directory for local compatibility, and its Firebase configuration blocks production function deployments.
 
 ## What Is Already Set Up In This Repo
 
@@ -25,6 +27,9 @@ This repository contains the Firebase-first infrastructure and Cloud Functions b
 npm install
 npm --prefix functions install
 firebase emulators:start
+
+# verify every callable referenced by the mobile app and website exists here
+npm run test:consumer-contract
 
 # run security rules tests (starts firestore+storage+auth emulators automatically)
 npm run test:rules

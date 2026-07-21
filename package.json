@@ -9,6 +9,8 @@
     "deploy:all": "firebase deploy --project sudsandshine-bd3e2",
     "migrate:data": "node scripts/migrate-supabase-to-firebase.mjs",
     "test:migration": "node --test tests/migration/*.test.mjs",
+    "test:consumer-contract": "node scripts/check-mobile-function-contract.mjs",
+    "test:mobile-contract": "node scripts/check-mobile-function-contract.mjs",
     "test:rules": "firebase emulators:exec --only auth,firestore,storage \"node --test --test-concurrency=1 tests/rules/*.test.mjs\"",
     "test:rules:local": "node --test --test-concurrency=1 tests/rules/*.test.mjs"
   },

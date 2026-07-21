@@ -11,9 +11,18 @@ const ADMIN_PENDING_RESERVATION_LIMIT = 100;
 const ADMIN_ACCEPTED_RESERVATION_LIMIT = 100;
 const ADMIN_COMPLETABLE_RESERVATION_LIMIT = ADMIN_ACCEPTED_RESERVATION_LIMIT;
 const MAX_REJECTION_REASON_LENGTH = 500;
-const COMPLETABLE_RESERVATION_STATUS_VALUES = [
+const ACCEPTED_RESERVATION_STATUS_VALUES = [
   "confirmed",
   "confirmado",
+  "in_progress",
+  "em_execucao",
+  "em execução",
+];
+const STARTABLE_RESERVATION_STATUS_VALUES = [
+  "confirmed",
+  "confirmado",
+];
+const COMPLETABLE_RESERVATION_STATUS_VALUES = [
   "in_progress",
   "em_execucao",
   "em execução",
@@ -111,6 +120,8 @@ function reservationDecisionAudit(data) {
   return {
     acceptedAt: timestampToIso(data.acceptedAt),
     acceptedByUid: String(data.acceptedByUid || "").trim(),
+    startedAt: timestampToIso(data.startedAt),
+    startedByUid: String(data.startedByUid || "").trim(),
     rejectedAt: timestampToIso(data.rejectedAt),
     rejectedByUid: String(data.rejectedByUid || "").trim(),
     completedAt: timestampToIso(data.completedAt),
@@ -167,7 +178,7 @@ function normalizeAdminAcceptedReservationDocument(doc, servicesById, now = new 
   if (!data || typeof data !== "object") return null;
 
   const status = normalizeReservationStatus(data.status);
-  if (!COMPLETABLE_RESERVATION_STATUS_VALUES.includes(status)) return null;
+  if (!ACCEPTED_RESERVATION_STATUS_VALUES.includes(status)) return null;
 
   const slotEndDate = parseReservationSlotEnd(data);
   if (!slotEndDate) return null;
@@ -202,7 +213,8 @@ function normalizeAdminAcceptedReservationDocument(doc, servicesById, now = new 
     createdAt: timestampToIso(data.createdAt),
     pendingExpiresAt: timestampToIso(data.pendingExpiresAt),
     loyaltyRewardApplied: data.loyaltyRewardApplied === true,
-    canComplete: slotEndDate <= now,
+    canStart: STARTABLE_RESERVATION_STATUS_VALUES.includes(status),
+    canComplete: COMPLETABLE_RESERVATION_STATUS_VALUES.includes(status),
     ...reservationDecisionAudit(data),
   };
 }
@@ -268,7 +280,24 @@ function assertPendingReservationActionable({reservationSnap, now = new Date()})
   return data;
 }
 
-function assertReservationCompletable({reservationSnap, now = new Date()}) {
+function assertReservationStartable({reservationSnap}) {
+  if (!reservationSnap?.exists) {
+    throw new HttpsError("not-found", "Reservation not found");
+  }
+
+  const data = reservationSnap.data() || {};
+  const status = normalizeReservationStatus(data.status);
+  if (COMPLETED_RESERVATION_STATUS_VALUES.includes(status)) {
+    throw new HttpsError("failed-precondition", "Reservation is already completed");
+  }
+  if (!STARTABLE_RESERVATION_STATUS_VALUES.includes(status)) {
+    throw new HttpsError("failed-precondition", "Reservation status cannot be started");
+  }
+
+  return data;
+}
+
+function assertReservationCompletable({reservationSnap}) {
   if (!reservationSnap?.exists) {
     throw new HttpsError("not-found", "Reservation not found");
   }
@@ -282,27 +311,35 @@ function assertReservationCompletable({reservationSnap, now = new Date()}) {
     throw new HttpsError("failed-precondition", "Reservation status cannot be completed");
   }
 
-  const slotEnd = parseReservationSlotEnd(data);
-  if (!slotEnd) {
-    throw new HttpsError("failed-precondition", "Reservation slot is incomplete");
-  }
-  if (slotEnd > now) {
-    throw new HttpsError("failed-precondition", "Reservation cannot be completed before its scheduled end");
-  }
-
   return data;
 }
 
+function completionPaymentStatus(data = {}) {
+  const priceCents = Number(data.priceCents);
+  if (data.loyaltyRewardApplied === true && Number.isFinite(priceCents) && priceCents <= 0) {
+    return "covered_by_loyalty";
+  }
+  return "paid";
+}
+
+function reservationEarnsLoyaltyStamp(data = {}) {
+  const priceCents = Number(data.priceCents);
+  return data.loyaltyRewardApplied !== true && Number.isFinite(priceCents) && priceCents > 0;
+}
+
 module.exports = {
+  ACCEPTED_RESERVATION_STATUS_VALUES,
   ADMIN_ACCEPTED_RESERVATION_LIMIT,
   ADMIN_COMPLETABLE_RESERVATION_LIMIT,
   ADMIN_PENDING_RESERVATION_LIMIT,
   COMPLETABLE_RESERVATION_STATUS_VALUES,
   COMPLETED_RESERVATION_STATUS_VALUES,
   MAX_REJECTION_REASON_LENGTH,
+  STARTABLE_RESERVATION_STATUS_VALUES,
   assertAdminRole,
   assertPendingReservationActionable,
   assertReservationCompletable,
+  assertReservationStartable,
   assertReservationId,
   buildAdminAcceptedReservations,
   buildAdminCompletableReservations,
@@ -313,5 +350,7 @@ module.exports = {
   normalizeRejectionReason,
   normalizeReservationStatus,
   parseReservationSlotEnd,
+  completionPaymentStatus,
+  reservationEarnsLoyaltyStamp,
   validateAdminReservationActionInput,
 };

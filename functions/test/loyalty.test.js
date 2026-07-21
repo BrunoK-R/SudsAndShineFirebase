@@ -23,6 +23,9 @@ function completedReservation(id, day = 1) {
     slotStart: `2026-05-${String(day).padStart(2, "0")}T09:00:00.000Z`,
     slotEnd: `2026-05-${String(day).padStart(2, "0")}T09:45:00.000Z`,
     status: "completed",
+    paymentStatus: "paid",
+    priceCents: 3200,
+    loyaltyStampGranted: true,
   });
 }
 
@@ -129,6 +132,68 @@ test("buildUserLoyalty counts only explicitly completed reservations", () => {
     loyalty.stampHistory.map((item) => item.id),
     ["completed"],
   );
+});
+
+test("buildUserLoyalty excludes unpaid and reward-funded completed washes", () => {
+  const loyalty = buildUserLoyalty({
+    now: new Date("2026-05-20T12:00:00.000Z"),
+    reservationDocs: [
+      completedReservation("paid", 1),
+      doc("pending-payment", {
+        serviceId: "standard",
+        serviceName: "Lavagem Standard",
+        slotStart: "2026-05-02T09:00:00.000Z",
+        slotEnd: "2026-05-02T09:45:00.000Z",
+        status: "completed",
+        paymentStatus: "pending",
+        priceCents: 2500,
+        loyaltyStampGranted: false,
+      }),
+      doc("loyalty-funded", {
+        serviceId: "standard",
+        serviceName: "Lavagem Standard",
+        slotStart: "2026-05-03T09:00:00.000Z",
+        slotEnd: "2026-05-03T09:45:00.000Z",
+        status: "completed",
+        paymentStatus: "covered_by_loyalty",
+        priceCents: 0,
+        loyaltyRewardApplied: true,
+        loyaltyStampGranted: false,
+      }),
+      doc("free-manual", {
+        serviceId: "standard",
+        serviceName: "Lavagem Standard",
+        slotStart: "2026-05-04T09:00:00.000Z",
+        slotEnd: "2026-05-04T09:45:00.000Z",
+        status: "completed",
+        paymentStatus: "paid",
+        priceCents: 0,
+      }),
+    ],
+  });
+
+  assert.equal(loyalty.totalWashes, 1);
+  assert.deepEqual(loyalty.stampHistory.map((item) => item.id), ["paid"]);
+});
+
+test("buildUserLoyalty preserves positive-price legacy completed washes", () => {
+  const loyalty = buildUserLoyalty({
+    now: new Date("2026-05-20T12:00:00.000Z"),
+    reservationDocs: [
+      doc("legacy-paid", {
+        serviceId: "standard",
+        serviceName: "Lavagem Standard",
+        slotStart: "2026-05-02T09:00:00.000Z",
+        slotEnd: "2026-05-02T09:45:00.000Z",
+        status: "completed",
+        paymentStatus: "pending",
+        priceCents: 2500,
+      }),
+    ],
+  });
+
+  assert.equal(loyalty.totalWashes, 1);
+  assert.deepEqual(loyalty.stampHistory.map((item) => item.id), ["legacy-paid"]);
 });
 
 test("buildLoyaltyRewardCode is deterministic for a user reward number", () => {

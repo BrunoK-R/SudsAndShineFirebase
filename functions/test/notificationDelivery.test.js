@@ -1,6 +1,8 @@
 const test = require("node:test");
 const assert = require("node:assert/strict");
 const {
+  ANDROID_NOTIFICATION_CHANNEL_ID,
+  ANDROID_NOTIFICATION_CLICK_ACTION,
   MAX_DELIVERY_ATTEMPTS,
   NOTIFICATION_QUIET_HOURS_TIME_ZONE,
   buildNotificationPushMessage,
@@ -68,11 +70,15 @@ test("buildNotificationPushMessage builds token-scoped booking payload", () => {
   assert.equal(message.data.templateKey, "booking_accepted");
   assert.equal(message.data.campaignId, "");
   assert.equal(message.data.reservationId, "reservation-1");
+  assert.equal(message.data.reservationCode, "SS-ABCDEFGH");
   assert.equal(message.data.redemptionId, "");
   assert.equal(message.data.targetScope, "");
   assert.equal(message.data.testOnly, "");
+  assert.equal(message.data.dedupeKey, "booking_accepted:reservation-1");
   assert.equal(message.data.source, "notification_outbox");
   assert.equal(message.android.priority, "high");
+  assert.equal(message.android.notification.channelId, ANDROID_NOTIFICATION_CHANNEL_ID);
+  assert.equal(message.android.notification.clickAction, ANDROID_NOTIFICATION_CLICK_ACTION);
   assert.equal(message.apns.payload.aps.sound, "default");
 });
 
@@ -321,6 +327,61 @@ test("admin test notification bypass requires explicit self-test scope", () => {
     ).deliverySuppressionReason,
     "admin-test-scope-invalid",
   );
+});
+
+test("campaign broadcast delivery requires marketing opt-in when targeted", () => {
+  const campaign = outbox({
+    type: "campaign_broadcast",
+    templateKey: "campaign_draft",
+    campaignId: "summer-test",
+    targetScope: "marketing_opt_in_users",
+    preferencesSnapshot: {campaignBroadcast: true, marketingConsentRequired: true},
+    campaignSnapshot: {marketingConsentRequired: true},
+  });
+
+  assert.equal(
+    notificationDeliveryPreferenceSuppression(
+      campaign,
+      notificationSettings({marketingEnabled: true}),
+      notificationPreferences({marketingEnabled: true}),
+    ),
+    null,
+  );
+  assert.equal(
+    notificationDeliveryPreferenceSuppression(
+      campaign,
+      notificationSettings({marketingEnabled: false}),
+      notificationPreferences({marketingEnabled: true}),
+    ).deliverySuppressionReason,
+    "admin-marketing-disabled",
+  );
+  assert.equal(
+    notificationDeliveryPreferenceSuppression(
+      campaign,
+      notificationSettings({marketingEnabled: true}),
+      notificationPreferences({marketingEnabled: false}),
+    ).deliverySuppressionReason,
+    "user-marketing-disabled",
+  );
+});
+
+test("campaign broadcast push payload carries campaign data", () => {
+  const message = buildNotificationPushMessage(
+    outbox({
+      type: "campaign_broadcast",
+      templateKey: "campaign_draft",
+      campaignId: "summer-test",
+      targetScope: "marketing_opt_in_users",
+      dedupeKey: "campaign_broadcast:summer-test:user-1",
+    }),
+    [{token: "token-1"}],
+  );
+
+  assert.equal(message.data.type, "campaign_broadcast");
+  assert.equal(message.data.templateKey, "campaign_draft");
+  assert.equal(message.data.campaignId, "summer-test");
+  assert.equal(message.data.targetScope, "marketing_opt_in_users");
+  assert.equal(message.data.dedupeKey, "campaign_broadcast:summer-test:user-1");
 });
 
 test("deliverySuppressionUpdate marks notifications terminal without send counts", () => {

@@ -23,6 +23,8 @@ test("buildNotificationSettings returns safe defaults when no settings exist", (
   assert.deepEqual(settings.templates.map((template) => template.key), TEMPLATE_KEYS);
   assert.equal(settings.templates.find((template) => template.key === "booking_cancelled").title, "Marcação cancelada");
   assert.equal(settings.templates.find((template) => template.key === "booking_rescheduled").enabled, true);
+  assert.equal(settings.templates.find((template) => template.key === "booking_in_progress").enabled, true);
+  assert.equal(settings.templates.find((template) => template.key === "booking_completed").enabled, true);
   assert.equal(
     settings.templates.find((template) => template.key === "loyalty_reward").title,
     "Recompensa disponível",
@@ -133,6 +135,8 @@ test("validateNotificationSettingsUpdateInput backfills newly added templates", 
   const legacyTemplateKeys = TEMPLATE_KEYS.filter((key) =>
     key !== "booking_cancelled" &&
       key !== "booking_rescheduled" &&
+      key !== "booking_in_progress" &&
+      key !== "booking_completed" &&
       key !== "loyalty_reward" &&
       key !== "admin_pending_booking",
   );
@@ -143,6 +147,14 @@ test("validateNotificationSettingsUpdateInput backfills newly added templates", 
 
   assert.equal(settings.templates.length, TEMPLATE_KEYS.length);
   assert.equal(settings.templates.find((template) => template.key === "booking_cancelled").title, "Marcação cancelada");
+  assert.equal(
+    settings.templates.find((template) => template.key === "booking_in_progress").title,
+    "A sua lavagem começou",
+  );
+  assert.equal(
+    settings.templates.find((template) => template.key === "booking_completed").title,
+    "Lavagem concluída",
+  );
   assert.equal(
     settings.templates.find((template) => template.key === "booking_rescheduled").body,
     "A sua marcação foi remarcada para {{slotStart}}. Consulte os detalhes na app.",

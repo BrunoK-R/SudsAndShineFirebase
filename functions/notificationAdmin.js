@@ -4,6 +4,8 @@ const TEMPLATE_KEYS = [
   "booking_request",
   "booking_accepted",
   "booking_rejected",
+  "booking_in_progress",
+  "booking_completed",
   "booking_expired",
   "booking_cancelled",
   "booking_rescheduled",
@@ -13,6 +15,8 @@ const TEMPLATE_KEYS = [
   "admin_pending_booking",
 ];
 const BACKWARD_COMPATIBLE_TEMPLATE_KEYS = new Set([
+  "booking_in_progress",
+  "booking_completed",
   "booking_cancelled",
   "booking_rescheduled",
   "loyalty_reward",
@@ -40,6 +44,20 @@ const DEFAULT_NOTIFICATION_TEMPLATES = [
     enabled: true,
     title: "Não foi possível confirmar a marcação",
     body: "Não conseguimos confirmar esta marcação. Consulte os detalhes na app.",
+  },
+  {
+    key: "booking_in_progress",
+    label: "Lavagem iniciada",
+    enabled: true,
+    title: "A sua lavagem começou",
+    body: "A marcação está agora a decorrer. Pode acompanhar o estado na app.",
+  },
+  {
+    key: "booking_completed",
+    label: "Lavagem concluída",
+    enabled: true,
+    title: "Lavagem concluída",
+    body: "A sua lavagem foi concluída. Consulte o histórico e avalie o serviço na app.",
   },
   {
     key: "booking_expired",

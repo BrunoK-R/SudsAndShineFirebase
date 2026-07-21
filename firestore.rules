@@ -289,54 +289,6 @@ service cloud.firestore {
         archivedAuditShapeValid();
     }
 
-    function isValidPublicReservationCreate() {
-      return request.resource.data.keys().hasOnly([
-          'reservationCode',
-          'customerName',
-          'customerEmail',
-          'customerPhone',
-          'serviceId',
-          'serviceName',
-          'slotStart',
-          'slotEnd',
-          'date',
-          'status',
-          'pendingExpiresAt',
-          'notes',
-          'createdAt',
-          'updatedAt',
-          'source',
-        ]) &&
-        request.resource.data.keys().hasAll([
-          'reservationCode',
-          'customerName',
-          'customerEmail',
-          'serviceId',
-          'slotStart',
-          'slotEnd',
-          'date',
-          'status',
-          'createdAt',
-          'updatedAt',
-          'source',
-        ]) &&
-        isShortString(request.resource.data.reservationCode, 5, 24) &&
-        isShortString(request.resource.data.customerName, 2, 120) &&
-        isShortString(request.resource.data.customerEmail, 5, 320) &&
-        isShortString(request.resource.data.serviceId, 1, 120) &&
-        isShortString(request.resource.data.slotStart, 10, 64) &&
-        isShortString(request.resource.data.slotEnd, 10, 64) &&
-        isShortString(request.resource.data.date, 10, 10) &&
-        request.resource.data.status == 'pending' &&
-        request.resource.data.source == 'public-booking' &&
-        request.resource.data.createdAt is timestamp &&
-        request.resource.data.updatedAt is timestamp &&
-        optionalTimestampField('pendingExpiresAt') &&
-        optionalStringField('customerPhone', 40) &&
-        optionalStringField('serviceName', 200) &&
-        optionalStringField('notes', 2000);
-    }
-
     function isValidNotificationPreferenceWrite(userId, docId) {
       return docId == 'default' &&
         request.resource.data.keys().hasOnly([
@@ -1009,7 +961,8 @@ service cloud.firestore {
     }
 
     match /reservations/{docId} {
-      allow create: if isStaff() || isValidPublicReservationCreate();
+      // Reservation creation is server-authoritative through createReservation.
+      allow create: if false;
       allow read, update, delete: if isStaff();
     }
 

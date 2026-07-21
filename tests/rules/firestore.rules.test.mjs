@@ -1108,17 +1108,12 @@ test('notification campaign drafts are callable-only for direct clients', async 
   }));
 });
 
-test('public reservation create is allowed only with valid payload shape', async () => {
-  const db = unauthDb();
-  const goodPayload = validReservationPayload();
-  await assertSucceeds(setDoc(doc(db, 'reservations', 'public-ok'), goodPayload));
-
-  const badPayload = {
-    ...validReservationPayload(),
-    status: 'confirmed',
-    internalNotes: 'not allowed for public create',
-  };
-  await assertFails(setDoc(doc(db, 'reservations', 'public-bad'), badPayload));
+test('reservation creation is restricted to the server callable', async () => {
+  const payload = validReservationPayload();
+  await assertFails(setDoc(doc(unauthDb(), 'reservations', 'public-direct'), payload));
+  await assertFails(setDoc(doc(userDb('user-1'), 'reservations', 'user-direct'), payload));
+  await assertFails(setDoc(doc(staffDb(), 'reservations', 'staff-direct'), payload));
+  await assertFails(setDoc(doc(adminDb(), 'reservations', 'admin-direct'), payload));
 });
 
 test('only staff can read reservations and blocked slots', async () => {

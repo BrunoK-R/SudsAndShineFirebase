@@ -12,6 +12,8 @@ const BOOKING_STATUS_TEMPLATE_KEYS = new Set([
   "booking_request",
   "booking_accepted",
   "booking_rejected",
+  "booking_in_progress",
+  "booking_completed",
   "booking_expired",
   "booking_cancelled",
   "booking_rescheduled",
@@ -42,6 +44,12 @@ function notificationOutboxDocId(templateKey, reservationId) {
 function adminNotificationOutboxDocId(templateKey, reservationId, recipientUid) {
   const safeRecipientUid = cleanReservationText(recipientUid, 128).replace(/[^A-Za-z0-9_-]/g, "_");
   return `${notificationOutboxDocId(templateKey, reservationId)}_${safeRecipientUid}`;
+}
+
+function campaignNotificationOutboxDocId(campaignId, recipientUid) {
+  const safeCampaignId = cleanReservationText(campaignId, 80).replace(/[^A-Za-z0-9_-]/g, "_");
+  const safeRecipientUid = cleanReservationText(recipientUid, 128).replace(/[^A-Za-z0-9_-]/g, "_");
+  return `campaign_draft_${safeCampaignId}_${safeRecipientUid}`;
 }
 
 function templateForKey(settings, templateKey) {
@@ -462,6 +470,65 @@ function buildAdminCampaignDraftTestNotificationOutboxDocument({
   };
 }
 
+function buildNotificationCampaignBroadcastOutboxDocument({
+  campaign,
+  recipientUid,
+  actorUid = "",
+  timestamp = null,
+} = {}) {
+  const normalizedRecipientUid = cleanReservationText(recipientUid, 128);
+  const campaignId = cleanReservationText(campaign?.campaignId, 80);
+  const title = cleanReservationText(campaign?.title, 120);
+  const body = cleanReservationText(campaign?.body, 1000);
+  if (!normalizedRecipientUid || !campaignId || !title || !body) return null;
+
+  const now = timestamp || new Date();
+  const rawTargetAudience = cleanReservationText(campaign?.targetAudience, 80);
+  const targetAudience = rawTargetAudience === "test_users" ? "test_users" : "marketing_opt_in_users";
+  const normalizedActorUid = cleanReservationText(actorUid, 128) || "system";
+  return {
+    type: "campaign_broadcast",
+    templateKey: "campaign_draft",
+    campaignId,
+    recipientUid: normalizedRecipientUid,
+    title,
+    body,
+    channels: ["push"],
+    deliveryState: "queued",
+    attemptCount: 0,
+    testOnly: false,
+    targetScope: targetAudience,
+    dedupeKey: `campaign_broadcast:${campaignId}:${normalizedRecipientUid}`,
+    createdAt: now,
+    updatedAt: now,
+    createdByUid: normalizedActorUid,
+    notificationCreatedByUid: normalizedActorUid,
+    source: "admin-campaign-broadcast",
+    templateSnapshot: {
+      key: "campaign_draft",
+      title,
+      body,
+      campaignId,
+    },
+    campaignSnapshot: {
+      campaignId,
+      title,
+      body,
+      targetAudience,
+      marketingConsentRequired: targetAudience !== "test_users",
+      status: cleanReservationText(campaign?.status, 40) || "draft",
+      sendBlocked: false,
+      sendBlockedReason: "",
+      deliveryLocked: false,
+      sendState: "ready",
+    },
+    preferencesSnapshot: {
+      campaignBroadcast: true,
+      marketingConsentRequired: targetAudience !== "test_users",
+    },
+  };
+}
+
 function buildAdminNotificationTestResponse({
   notification,
   notificationId,
@@ -610,7 +677,9 @@ module.exports = {
   buildAdminPendingBookingNotificationOutboxDocument,
   buildAdminTestNotificationOutboxDocument,
   buildLoyaltyRewardNotificationOutboxDocument,
+  buildNotificationCampaignBroadcastOutboxDocument,
   buildReservationNotificationOutboxDocument,
+  campaignNotificationOutboxDocId,
   enqueueAdminPendingBookingNotification,
   enqueueLoyaltyRewardNotification,
   enqueueReservationNotification,

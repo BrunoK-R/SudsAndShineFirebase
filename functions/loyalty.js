@@ -47,8 +47,15 @@ function isCancelledStatus(status) {
 function isCompletedLoyaltyWash(data, now) {
   const status = normalizeStatus(data.status);
   if (isCancelledStatus(status)) return false;
-  if (COMPLETED_STATUS_VALUES.includes(status)) return true;
-  return false;
+  if (!COMPLETED_STATUS_VALUES.includes(status)) return false;
+  if (data.loyaltyRewardApplied === true || data.loyaltyStampGranted === false) return false;
+  if (data.loyaltyStampGranted === true) return true;
+
+  // Historical completed reservations predate explicit stamp/payment audit
+  // fields. Preserve positive-price washes; all new completions set the stamp
+  // decision explicitly.
+  const priceCents = Number(data.priceCents);
+  return Number.isFinite(priceCents) && priceCents > 0;
 }
 
 function normalizeLoyaltyReservationDocument(doc, now) {

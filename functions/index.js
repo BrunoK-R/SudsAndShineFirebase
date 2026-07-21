@@ -82,8 +82,11 @@ const {
 const {
   assertPendingReservationActionable,
   assertReservationCompletable,
+  assertReservationStartable,
   buildAdminAcceptedReservations,
   buildAdminPendingReservations,
+  completionPaymentStatus,
+  reservationEarnsLoyaltyStamp,
   validateAdminReservationActionInput,
 } = require("./reservationAdmin");
 const {
@@ -106,11 +109,15 @@ const {
 } = require("./notificationAdmin");
 const {
   NOTIFICATION_CAMPAIGN_DRAFTS_COLLECTION,
+  assertNotificationCampaignBroadcastReady,
   buildAdminNotificationCampaignDrafts,
+  buildNotificationCampaignBroadcastReceipt,
+  buildNotificationCampaignBroadcastUpdateValue,
   buildNotificationCampaignDraftArchiveValue,
   buildNotificationCampaignDraftMutationReceipt,
   buildNotificationCampaignDraftValue,
   normalizeNotificationCampaignDraft,
+  validateNotificationCampaignBroadcastInput,
   validateNotificationCampaignDraftArchiveInput,
   validateNotificationCampaignDraftInput,
 } = require("./notificationCampaigns");
@@ -133,6 +140,8 @@ const {
   buildAdminCampaignDraftTestNotificationOutboxDocument,
   buildAdminNotificationTestResponse,
   buildAdminTestNotificationOutboxDocument,
+  buildNotificationCampaignBroadcastOutboxDocument,
+  campaignNotificationOutboxDocId,
   isBookingReminderReservationDue,
   isReviewPromptReservationDue,
   notificationOutboxDocId,
@@ -158,6 +167,7 @@ admin.initializeApp();
 const db = admin.firestore();
 const USER_HISTORY_RESERVATION_LIMIT = 50;
 const ADMIN_ALERT_RECIPIENT_LIMIT = 25;
+const CAMPAIGN_BROADCAST_BATCH_WRITE_LIMIT = 450;
 
 setGlobalOptions({
   maxInstances: 10,
@@ -222,6 +232,64 @@ function adminAlertRecipientsQuery() {
   return db.collection("admin_allowlist")
     .where("role", "==", "admin")
     .limit(ADMIN_ALERT_RECIPIENT_LIMIT);
+}
+
+async function notificationCampaignBroadcastRecipientUids(campaign, actorUid) {
+  const targetAudience = String(campaign?.targetAudience || "").trim();
+  if (targetAudience === "test_users") {
+    return hasActiveNotificationTokenForUser(actorUid) ? [actorUid] : [];
+  }
+
+  if (targetAudience !== "marketing_opt_in_users") return [];
+
+  const usersSnap = await db.collection("users")
+    .where("marketingOptIn", "==", true)
+    .get();
+  const recipientUids = [];
+  for (const userSnap of usersSnap.docs) {
+    const uid = String(userSnap.id || "").trim();
+    if (!uid) continue;
+    if (await hasActiveNotificationTokenForUser(uid)) {
+      recipientUids.push(uid);
+    }
+  }
+  return recipientUids;
+}
+
+async function writeNotificationCampaignBroadcastOutbox({
+  campaign,
+  recipientUids,
+  actorUid,
+  timestamp,
+}) {
+  let batch = db.batch();
+  let batchSize = 0;
+  const commits = [];
+  for (const recipientUid of recipientUids) {
+    const notification = buildNotificationCampaignBroadcastOutboxDocument({
+      campaign,
+      recipientUid,
+      actorUid,
+      timestamp,
+    });
+    if (!notification) continue;
+    batch.set(
+      db.collection(NOTIFICATION_OUTBOX_COLLECTION).doc(
+        campaignNotificationOutboxDocId(campaign.campaignId, recipientUid),
+      ),
+      notification,
+    );
+    batchSize += 1;
+    if (batchSize >= CAMPAIGN_BROADCAST_BATCH_WRITE_LIMIT) {
+      commits.push(batch.commit());
+      batch = db.batch();
+      batchSize = 0;
+    }
+  }
+  if (batchSize > 0) {
+    commits.push(batch.commit());
+  }
+  await Promise.all(commits);
 }
 
 function adminAlertRecipientUidsFromSnapshot(snap) {
@@ -1000,6 +1068,7 @@ exports.cancelMyReservation = onCall(async (request) => {
       cancelledByUid: uid,
       updatedAt: admin.firestore.FieldValue.serverTimestamp(),
     });
+    releaseReservedLoyaltyReward(tx, reservationData);
     enqueueReservationNotification(tx, {
       db,
       templateKey: "booking_cancelled",
@@ -1826,6 +1895,58 @@ exports.archiveAdminNotificationCampaignDraft = onCall(async (request) => {
   });
 });
 
+exports.broadcastAdminNotificationCampaign = onCall(async (request) => {
+  await assertAdminRequest(request);
+  const data = validateNotificationCampaignBroadcastInput(request.data);
+  const actorUid = request.auth.uid;
+  const campaignRef = notificationCampaignDraftsCollection().doc(data.campaignId);
+  const [campaignSnap, notificationSettingsSnap] = await Promise.all([
+    campaignRef.get(),
+    notificationSettingsRef().get(),
+  ]);
+  const campaign = campaignSnap.exists ? normalizeNotificationCampaignDraft(campaignSnap) : null;
+  const now = new Date();
+  assertNotificationCampaignBroadcastReady(campaign, now);
+  const notificationSettings = buildNotificationSettings(notificationSettingsSnap);
+  if (
+    campaign.targetAudience === "marketing_opt_in_users" &&
+    notificationSettings.marketingEnabled !== true
+  ) {
+    throw new HttpsError(
+      "failed-precondition",
+      "Marketing notifications must be enabled before this campaign can be broadcast",
+    );
+  }
+
+  const recipientUids = await notificationCampaignBroadcastRecipientUids(campaign, actorUid);
+  if (recipientUids.length === 0) {
+    throw new HttpsError("failed-precondition", "No active notification devices matched this campaign");
+  }
+
+  const latestSnap = await campaignRef.get();
+  const latestCampaign = latestSnap.exists ? normalizeNotificationCampaignDraft(latestSnap) : null;
+  assertNotificationCampaignBroadcastReady(latestCampaign, now);
+
+  await writeNotificationCampaignBroadcastOutbox({
+    campaign: latestCampaign,
+    recipientUids,
+    actorUid,
+    timestamp: now,
+  });
+  await campaignRef.update(buildNotificationCampaignBroadcastUpdateValue({
+    actorUid,
+    queuedCount: recipientUids.length,
+    timestamp: now,
+  }));
+
+  return buildNotificationCampaignBroadcastReceipt({
+    campaign: latestCampaign,
+    queuedCount: recipientUids.length,
+    skippedCount: 0,
+    actorUid,
+  });
+});
+
 exports.updateAvailabilityConfiguration = onCall(async (request) => {
   await assertAdminRequest(request);
   const availability = validateAvailabilityConfigurationInput(request.data);
@@ -2151,7 +2272,6 @@ exports.acceptReservation = onCall(async (request) => {
       acceptedByUid: request.auth.uid,
       updatedAt: admin.firestore.FieldValue.serverTimestamp(),
     });
-    redeemReservedLoyaltyReward(tx, reservationData, data.reservationId);
     enqueueReservationNotification(tx, {
       db,
       templateKey: "booking_accepted",
@@ -2173,6 +2293,58 @@ exports.acceptReservation = onCall(async (request) => {
     reservationId: data.reservationId,
     reservationCode,
     status: "confirmed",
+  };
+});
+
+exports.startReservation = onCall(async (request) => {
+  await assertAdminRequest(request);
+  const data = validateAdminReservationActionInput(request.data);
+  const reservationRef = db.collection("reservations").doc(data.reservationId);
+  let reservationCode = "";
+
+  await db.runTransaction(async (tx) => {
+    const reservationSnap = await tx.get(reservationRef);
+    const reservationData = assertReservationStartable({reservationSnap});
+    const customerUid = String(reservationData.customerUid || "").trim();
+    const [
+      notificationSettingsSnap,
+      notificationPreferencesSnap,
+      notificationUserSnap,
+    ] = customerUid ? await Promise.all([
+      tx.get(notificationSettingsRef()),
+      tx.get(userNotificationPreferencesRef(customerUid)),
+      tx.get(userDocument(customerUid)),
+    ]) : [null, null, null];
+
+    reservationCode = String(reservationData.reservationCode || "").trim();
+    tx.update(reservationRef, {
+      status: "in_progress",
+      startedAt: admin.firestore.FieldValue.serverTimestamp(),
+      startedByUid: request.auth.uid,
+      updatedAt: admin.firestore.FieldValue.serverTimestamp(),
+      updateSource: "admin-mobile-start",
+    });
+    enqueueReservationNotification(tx, {
+      db,
+      templateKey: "booking_in_progress",
+      reservationId: data.reservationId,
+      reservation: {
+        ...reservationData,
+        status: "in_progress",
+      },
+      notificationSettingsSnap,
+      userPreferencesSnap: notificationPreferencesSnap,
+      userDocSnap: notificationUserSnap,
+      actorUid: request.auth.uid,
+      timestamp: admin.firestore.FieldValue.serverTimestamp(),
+    });
+  });
+
+  return {
+    ok: true,
+    reservationId: data.reservationId,
+    reservationCode,
+    status: "in_progress",
   };
 });
 
@@ -2266,12 +2438,35 @@ exports.completeReservation = onCall(async (request) => {
     ]) : [null, null, null, null, null];
 
     reservationCode = String(reservationData.reservationCode || "").trim();
+    const paymentStatus = completionPaymentStatus(reservationData);
+    const loyaltyStampGranted = reservationEarnsLoyaltyStamp(reservationData);
     tx.update(reservationRef, {
       status: "completed",
+      paymentStatus,
+      paymentConfirmedAt: admin.firestore.FieldValue.serverTimestamp(),
+      paymentConfirmedByUid: request.auth.uid,
+      loyaltyStampGranted,
       completedAt: admin.firestore.FieldValue.serverTimestamp(),
       completedByUid: request.auth.uid,
       updatedAt: admin.firestore.FieldValue.serverTimestamp(),
       updateSource: "admin-mobile-completion",
+    });
+    redeemReservedLoyaltyReward(tx, reservationData, data.reservationId);
+    enqueueReservationNotification(tx, {
+      db,
+      templateKey: "booking_completed",
+      reservationId: data.reservationId,
+      reservation: {
+        ...reservationData,
+        status: "completed",
+        paymentStatus,
+        loyaltyStampGranted,
+      },
+      notificationSettingsSnap,
+      userPreferencesSnap: notificationPreferencesSnap,
+      userDocSnap: notificationUserSnap,
+      actorUid: request.auth.uid,
+      timestamp: admin.firestore.FieldValue.serverTimestamp(),
     });
 
     if (customerUid && !reviewSnap.exists && !existingOutboxSnap.exists) {

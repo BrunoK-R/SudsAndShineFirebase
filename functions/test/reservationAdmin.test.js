@@ -6,8 +6,11 @@ const {
   buildAdminCompletableReservations,
   assertPendingReservationActionable,
   assertReservationCompletable,
+  assertReservationStartable,
   buildAdminPendingReservations,
+  completionPaymentStatus,
   normalizeRejectionReason,
+  reservationEarnsLoyaltyStamp,
   validateAdminReservationActionInput,
 } = require("../reservationAdmin");
 
@@ -149,13 +152,16 @@ test("buildAdminAcceptedReservations returns accepted jobs sorted by slot", () =
 
   assert.deepEqual(requests.map((item) => item.id), ["earlier", "later", "future"]);
   assert.equal(requests[0].status, "confirmed");
-  assert.equal(requests[0].canComplete, true);
+  assert.equal(requests[0].canStart, true);
+  assert.equal(requests[0].canComplete, false);
   assert.equal(requests[1].status, "in_progress");
+  assert.equal(requests[1].canStart, false);
   assert.equal(requests[1].canComplete, true);
   assert.equal(requests[1].priceCents, 4900);
   assert.equal(requests[1].acceptedAt, "2026-05-19T18:30:00.000Z");
   assert.equal(requests[1].acceptedByUid, "admin-uid");
   assert.equal(requests[2].status, "confirmed");
+  assert.equal(requests[2].canStart, true);
   assert.equal(requests[2].canComplete, false);
 });
 
@@ -201,51 +207,48 @@ test("assertPendingReservationActionable rejects expired and non-pending request
   }), /not pending/);
 });
 
-test("assertReservationCompletable allows finished confirmed reservations only", () => {
-  const now = new Date("2026-05-20T12:00:00.000Z");
-
-  const reservation = assertReservationCompletable({
-    now,
-    reservationSnap: doc("confirmed", {
-      status: "confirmed",
-      slotEnd: "2026-05-20T11:59:00.000Z",
-    }),
+test("assertReservationStartable allows confirmed reservations only", () => {
+  const reservation = assertReservationStartable({
+    reservationSnap: doc("confirmed", {status: "confirmed"}),
   });
 
   assert.equal(reservation.status, "confirmed");
+  assert.throws(() => assertReservationStartable({
+    reservationSnap: doc("progress", {status: "in_progress"}),
+  }), /cannot be started/);
+  assert.throws(() => assertReservationStartable({
+    reservationSnap: doc("completed", {status: "completed"}),
+  }), /already completed/);
+});
+
+test("assertReservationCompletable allows in-progress reservations only", () => {
   assert.doesNotThrow(() => assertReservationCompletable({
-    now,
     reservationSnap: doc("legacy", {
       status: "em_execucao",
       slotEnd: "2026-05-20T10:00:00.000Z",
     }),
   }));
   assert.throws(() => assertReservationCompletable({
-    now,
-    reservationSnap: doc("future", {
+    reservationSnap: doc("confirmed", {
       status: "confirmed",
-      slotEnd: "2026-05-20T12:01:00.000Z",
-    }),
-  }), /before its scheduled end/);
-  assert.throws(() => assertReservationCompletable({
-    now,
-    reservationSnap: doc("pending", {
-      status: "pending",
-      slotEnd: "2026-05-20T10:00:00.000Z",
     }),
   }), /cannot be completed/);
   assert.throws(() => assertReservationCompletable({
-    now,
+    reservationSnap: doc("pending", {
+      status: "pending",
+    }),
+  }), /cannot be completed/);
+  assert.throws(() => assertReservationCompletable({
     reservationSnap: doc("completed", {
       status: "completed",
-      slotEnd: "2026-05-20T10:00:00.000Z",
     }),
   }), /already completed/);
-  assert.throws(() => assertReservationCompletable({
-    now,
-    reservationSnap: doc("broken", {
-      status: "confirmed",
-      slotEnd: "not-a-date",
-    }),
-  }), /slot is incomplete/);
+});
+
+test("completion payment and loyalty rules distinguish paid and reward washes", () => {
+  assert.equal(completionPaymentStatus({priceCents: 3200}), "paid");
+  assert.equal(completionPaymentStatus({priceCents: 0, loyaltyRewardApplied: true}), "covered_by_loyalty");
+  assert.equal(reservationEarnsLoyaltyStamp({priceCents: 3200}), true);
+  assert.equal(reservationEarnsLoyaltyStamp({priceCents: 0}), false);
+  assert.equal(reservationEarnsLoyaltyStamp({priceCents: 0, loyaltyRewardApplied: true}), false);
 });

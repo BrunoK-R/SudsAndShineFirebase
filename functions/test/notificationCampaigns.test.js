@@ -3,18 +3,22 @@ const assert = require("node:assert/strict");
 const {
   NOTIFICATION_CAMPAIGN_SEND_BLOCKED_REASON,
   NOTIFICATION_CAMPAIGN_SEND_STATE,
+  assertNotificationCampaignBroadcastReady,
   buildAdminNotificationCampaignDrafts,
+  buildNotificationCampaignBroadcastReceipt,
+  buildNotificationCampaignBroadcastUpdateValue,
   buildNotificationCampaignDraftArchiveValue,
   buildNotificationCampaignDraftMutationReceipt,
   buildNotificationCampaignDraftValue,
   normalizeNotificationCampaignDraft,
+  validateNotificationCampaignBroadcastInput,
   validateNotificationCampaignDraftArchiveInput,
   validateNotificationCampaignDraftInput,
 } = require("../notificationCampaigns");
 
 const NOW = new Date("2026-06-01T09:00:00.000Z");
 
-test("validateNotificationCampaignDraftInput builds safe draft-only campaign documents", () => {
+test("validateNotificationCampaignDraftInput builds safe broadcast-ready campaign documents", () => {
   const draft = validateNotificationCampaignDraftInput(
     {
       campaignId: "summer-offer",
@@ -38,8 +42,8 @@ test("validateNotificationCampaignDraftInput builds safe draft-only campaign doc
   assert.equal(draft.status, "draft");
   assert.equal(draft.scheduledAtIso, "2026-06-02T09:00:00.000Z");
   assert.equal(draft.notes, "Confirmar copy antes do envio");
-  assert.equal(draft.sendBlocked, true);
-  assert.equal(draft.sendBlockedReason, NOTIFICATION_CAMPAIGN_SEND_BLOCKED_REASON);
+  assert.equal(draft.sendBlocked, false);
+  assert.equal(draft.sendBlockedReason, "");
 
   assert.deepEqual(buildNotificationCampaignDraftValue(draft), {
     campaignId: "summer-offer",
@@ -53,28 +57,28 @@ test("validateNotificationCampaignDraftInput builds safe draft-only campaign doc
     scheduledAtIso: "2026-06-02T09:00:00.000Z",
     scheduledAt: draft.scheduledAt,
     notes: "Confirmar copy antes do envio",
-    sendBlocked: true,
-    sendBlockedReason: NOTIFICATION_CAMPAIGN_SEND_BLOCKED_REASON,
-    deliveryLocked: true,
-    sendState: "draft_only",
+    sendBlocked: false,
+    sendBlockedReason: "",
+    deliveryLocked: false,
+    sendState: "ready",
     updateSource: "admin-mobile-notification-campaigns",
   });
 });
 
-test("validateNotificationCampaignDraftInput uses generated safe ids for new drafts", () => {
+test("validateNotificationCampaignDraftInput safely migrates the legacy all-users audience", () => {
   const draft = validateNotificationCampaignDraftInput(
     {
       title: "Teste",
       body: "Mensagem para equipa",
-      targetAudience: "test_users",
+      targetAudience: "all_users",
     },
     "generated-safe-id",
     NOW,
   );
 
   assert.equal(draft.campaignId, "generated-safe-id");
-  assert.equal(draft.targetAudience, "test_users");
-  assert.equal(draft.marketingConsentRequired, false);
+  assert.equal(draft.targetAudience, "marketing_opt_in_users");
+  assert.equal(draft.marketingConsentRequired, true);
   assert.equal(draft.scheduledAtIso, "");
   assert.equal(draft.scheduledAt, null);
 });
@@ -182,18 +186,63 @@ test("validateNotificationCampaignDraftArchiveInput rejects path-like ids", () =
   );
 });
 
+test("validateNotificationCampaignBroadcastInput requires explicit confirmation", () => {
+  assert.deepEqual(
+    validateNotificationCampaignBroadcastInput({campaignId: "summer-draft", confirmBroadcast: true}),
+    {campaignId: "summer-draft", confirmBroadcast: true},
+  );
+
+  assert.throws(
+    () => validateNotificationCampaignBroadcastInput({campaignId: "summer-draft"}),
+    /explicit confirmation/,
+  );
+  assert.throws(
+    () => validateNotificationCampaignBroadcastInput({campaignId: "../summer-draft", confirmBroadcast: true}),
+    /campaignId is invalid/,
+  );
+});
+
+test("assertNotificationCampaignBroadcastReady enforces draft state and schedule", () => {
+  const campaign = {
+    campaignId: "summer-draft",
+    status: "draft",
+    targetAudience: "marketing_opt_in_users",
+    scheduledAtIso: "2026-06-01T10:00:00.000Z",
+  };
+
+  assert.equal(
+    assertNotificationCampaignBroadcastReady(campaign, new Date("2026-06-01T10:00:00.000Z")),
+    campaign,
+  );
+  assert.throws(
+    () => assertNotificationCampaignBroadcastReady(campaign, new Date("2026-06-01T09:59:59.000Z")),
+    /scheduled time has not been reached/,
+  );
+  assert.throws(
+    () => assertNotificationCampaignBroadcastReady({...campaign, status: "sent"}, NOW),
+    /Only active draft/,
+  );
+  assert.throws(
+    () => assertNotificationCampaignBroadcastReady(
+      {...campaign, targetAudience: "all_users"},
+      new Date(campaign.scheduledAtIso),
+    ),
+    /audience is not safe/,
+  );
+});
+
 test("buildNotificationCampaignDraftArchiveValue keeps archived campaigns send locked", () => {
   assert.deepEqual(buildNotificationCampaignDraftArchiveValue(), {
     status: "archived",
     sendBlocked: true,
     sendBlockedReason: NOTIFICATION_CAMPAIGN_SEND_BLOCKED_REASON,
     deliveryLocked: true,
-    sendState: "draft_only",
+    sendState: "archived",
     updateSource: "admin-mobile-notification-campaigns",
   });
 });
 
-test("buildNotificationCampaignDraftMutationReceipt reports blocked send state", () => {
+test("buildNotificationCampaignDraftMutationReceipt reports ready send state", () => {
   assert.deepEqual(buildNotificationCampaignDraftMutationReceipt({
     campaignId: "summer-test",
     status: "draft",
@@ -205,10 +254,50 @@ test("buildNotificationCampaignDraftMutationReceipt reports blocked send state",
     campaignId: "summer-test",
     status: "draft",
     targetAudience: "marketing_opt_in_users",
-    sendBlocked: true,
-    sendBlockedReason: NOTIFICATION_CAMPAIGN_SEND_BLOCKED_REASON,
-    deliveryLocked: true,
+    sendBlocked: false,
+    sendBlockedReason: "",
+    deliveryLocked: false,
     sendState: NOTIFICATION_CAMPAIGN_SEND_STATE,
+  });
+});
+
+test("buildNotificationCampaignBroadcast helpers mark sent campaigns", () => {
+  const sentAt = new Date("2026-06-01T10:00:00.000Z");
+  assert.deepEqual(buildNotificationCampaignBroadcastUpdateValue({
+    actorUid: "admin-1",
+    queuedCount: 3,
+    timestamp: sentAt,
+  }), {
+    status: "sent",
+    sendBlocked: true,
+    sendBlockedReason: "campaign-already-sent",
+    deliveryLocked: true,
+    sendState: "sent",
+    sentAt,
+    sentByUid: "admin-1",
+    queuedCount: 3,
+    updatedAt: sentAt,
+    updatedByUid: "admin-1",
+    updateSource: "admin-mobile-notification-campaigns",
+  });
+
+  assert.deepEqual(buildNotificationCampaignBroadcastReceipt({
+    campaign: {campaignId: "summer-test", targetAudience: "marketing_opt_in_users"},
+    queuedCount: 3,
+    skippedCount: 1,
+    actorUid: "admin-1",
+  }), {
+    ok: true,
+    campaignId: "summer-test",
+    status: "sent",
+    targetAudience: "marketing_opt_in_users",
+    queuedCount: 3,
+    skippedCount: 1,
+    sentByUid: "admin-1",
+    sendBlocked: true,
+    sendBlockedReason: "campaign-already-sent",
+    deliveryLocked: true,
+    sendState: "sent",
   });
 });
 
@@ -229,14 +318,15 @@ test("buildAdminNotificationCampaignDrafts normalizes admin campaign list", () =
     doc("draft", {
       title: "Rascunho",
       body: "Mensagem teste",
-      targetAudience: "test_users",
+      targetAudience: "all_users",
       scheduledAt: {toDate: () => new Date("2026-06-02T09:00:00.000Z")},
-      sendBlockedReason: "",
+      sendBlocked: true,
+      sendBlockedReason: "campaign-send-not-implemented",
+      deliveryLocked: true,
       createdAt: new Date("2026-06-01T10:00:00.000Z"),
       createdByUid: "admin-created",
       updatedAt: {toDate: () => new Date("2026-06-01T11:00:00.000Z")},
       updatedByUid: "admin-updated",
-      sendBlocked: false,
     }),
     doc("incomplete", {
       title: "",
@@ -248,10 +338,12 @@ test("buildAdminNotificationCampaignDrafts normalizes admin campaign list", () =
   assert.equal(result.source, "firestore");
   assert.deepEqual(result.campaigns.map((campaign) => campaign.campaignId), ["draft", "archived"]);
   assert.equal(result.campaigns[0].status, "draft");
+  assert.equal(result.campaigns[0].targetAudience, "marketing_opt_in_users");
+  assert.equal(result.campaigns[0].marketingConsentRequired, true);
   assert.equal(result.campaigns[0].scheduledAtIso, "2026-06-02T09:00:00.000Z");
-  assert.equal(result.campaigns[0].sendBlocked, true);
-  assert.equal(result.campaigns[0].sendBlockedReason, NOTIFICATION_CAMPAIGN_SEND_BLOCKED_REASON);
-  assert.equal(result.campaigns[0].deliveryLocked, true);
+  assert.equal(result.campaigns[0].sendBlocked, false);
+  assert.equal(result.campaigns[0].sendBlockedReason, "");
+  assert.equal(result.campaigns[0].deliveryLocked, false);
   assert.equal(result.campaigns[0].sendState, NOTIFICATION_CAMPAIGN_SEND_STATE);
   assert.equal(result.campaigns[0].createdAtIso, "2026-06-01T10:00:00.000Z");
   assert.equal(result.campaigns[0].createdByUid, "admin-created");

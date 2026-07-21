@@ -3,7 +3,8 @@ const {HttpsError} = require("firebase-functions/v2/https");
 const NOTIFICATION_CAMPAIGN_DRAFTS_COLLECTION = "notification_campaign_drafts";
 const NOTIFICATION_CAMPAIGNS_COLLECTION = NOTIFICATION_CAMPAIGN_DRAFTS_COLLECTION;
 const NOTIFICATION_CAMPAIGN_SEND_BLOCKED_REASON = "campaign-send-not-implemented";
-const NOTIFICATION_CAMPAIGN_SEND_STATE = "draft_only";
+const NOTIFICATION_CAMPAIGN_SEND_STATE = "ready";
+const NOTIFICATION_CAMPAIGN_SENT_STATE = "sent";
 const NOTIFICATION_CAMPAIGN_UPDATE_SOURCE = "admin-mobile-notification-campaigns";
 
 const TARGET_AUDIENCE_TEST_USERS = "test_users";
@@ -47,11 +48,15 @@ function normalizeCampaignId(value, fallbackId) {
 
 function normalizeTargetAudience(value) {
   const targetAudience = typeof value === "string" ? value.trim() : "";
+  // Existing drafts used `all_users`. Treat them as consent-scoped marketing
+  // campaigns so a legacy value can never broaden the recipient audience.
+  if (targetAudience === "all_users") return TARGET_AUDIENCE_MARKETING_OPT_IN_USERS;
   return ALLOWED_TARGET_AUDIENCES.has(targetAudience) ? targetAudience : TARGET_AUDIENCE_TEST_USERS;
 }
 
 function requireTargetAudience(value) {
   const targetAudience = typeof value === "string" ? value.trim() : "";
+  if (targetAudience === "all_users") return TARGET_AUDIENCE_MARKETING_OPT_IN_USERS;
   if (!ALLOWED_TARGET_AUDIENCES.has(targetAudience)) {
     throw new HttpsError("invalid-argument", "targetAudience is invalid");
   }
@@ -179,8 +184,8 @@ function validateNotificationCampaignDraftInput(data = {}, fallbackId = "", now 
     scheduledAtIso: schedule.scheduledAtIso,
     scheduledAt: schedule.scheduledAt,
     notes: cleanOptionalText(data.notes, MAX_NOTES_LENGTH),
-    sendBlocked: true,
-    sendBlockedReason: NOTIFICATION_CAMPAIGN_SEND_BLOCKED_REASON,
+    sendBlocked: false,
+    sendBlockedReason: "",
   };
   draft.document = {
     campaignId: draft.campaignId,
@@ -194,9 +199,9 @@ function validateNotificationCampaignDraftInput(data = {}, fallbackId = "", now 
     scheduledAtIso: draft.scheduledAtIso,
     scheduledAt: draft.scheduledAt,
     notes: draft.notes,
-    sendBlocked: true,
-    sendBlockedReason: NOTIFICATION_CAMPAIGN_SEND_BLOCKED_REASON,
-    deliveryLocked: true,
+    sendBlocked: false,
+    sendBlockedReason: "",
+    deliveryLocked: false,
     sendState: NOTIFICATION_CAMPAIGN_SEND_STATE,
   };
   return draft;
@@ -209,6 +214,44 @@ function validateNotificationCampaignDraftArchiveInput(data = {}) {
   return {
     campaignId: normalizeCampaignId(data.campaignId || data.id, ""),
   };
+}
+
+function validateNotificationCampaignBroadcastInput(data = {}) {
+  if (!data || typeof data !== "object" || Array.isArray(data)) {
+    throw new HttpsError("invalid-argument", "Notification campaign broadcast payload is required");
+  }
+  if (data.confirmBroadcast !== true) {
+    throw new HttpsError("failed-precondition", "Campaign broadcast requires explicit confirmation");
+  }
+  return {
+    campaignId: normalizeCampaignId(data.campaignId || data.id, ""),
+    confirmBroadcast: true,
+  };
+}
+
+function assertNotificationCampaignBroadcastReady(campaign, now = new Date()) {
+  if (!campaign || typeof campaign !== "object") {
+    throw new HttpsError("not-found", "Notification campaign draft not found");
+  }
+  if (campaign.status !== "draft") {
+    throw new HttpsError("failed-precondition", "Only active draft campaigns can be broadcast");
+  }
+  if (!ALLOWED_TARGET_AUDIENCES.has(campaign.targetAudience)) {
+    throw new HttpsError("failed-precondition", "Campaign audience is not safe to broadcast");
+  }
+
+  const scheduledAtIso = typeof campaign.scheduledAtIso === "string" ? campaign.scheduledAtIso.trim() : "";
+  if (scheduledAtIso) {
+    const scheduledAt = new Date(scheduledAtIso);
+    if (Number.isNaN(scheduledAt.getTime())) {
+      throw new HttpsError("failed-precondition", "Campaign schedule is invalid");
+    }
+    if (scheduledAt > now) {
+      throw new HttpsError("failed-precondition", "Campaign scheduled time has not been reached");
+    }
+  }
+
+  return campaign;
 }
 
 function buildNotificationCampaignDraftValue(draft) {
@@ -224,9 +267,9 @@ function buildNotificationCampaignDraftValue(draft) {
     scheduledAtIso: draft.scheduledAtIso,
     scheduledAt: draft.scheduledAt,
     notes: draft.notes,
-    sendBlocked: true,
-    sendBlockedReason: NOTIFICATION_CAMPAIGN_SEND_BLOCKED_REASON,
-    deliveryLocked: true,
+    sendBlocked: false,
+    sendBlockedReason: "",
+    deliveryLocked: false,
     sendState: NOTIFICATION_CAMPAIGN_SEND_STATE,
     updateSource: NOTIFICATION_CAMPAIGN_UPDATE_SOURCE,
   };
@@ -238,7 +281,27 @@ function buildNotificationCampaignDraftArchiveValue() {
     sendBlocked: true,
     sendBlockedReason: NOTIFICATION_CAMPAIGN_SEND_BLOCKED_REASON,
     deliveryLocked: true,
-    sendState: NOTIFICATION_CAMPAIGN_SEND_STATE,
+    sendState: "archived",
+    updateSource: NOTIFICATION_CAMPAIGN_UPDATE_SOURCE,
+  };
+}
+
+function buildNotificationCampaignBroadcastUpdateValue({
+  actorUid = "",
+  queuedCount = 0,
+  timestamp = new Date(),
+} = {}) {
+  return {
+    status: "sent",
+    sendBlocked: true,
+    sendBlockedReason: "campaign-already-sent",
+    deliveryLocked: true,
+    sendState: NOTIFICATION_CAMPAIGN_SENT_STATE,
+    sentAt: timestamp,
+    sentByUid: actorUid,
+    queuedCount,
+    updatedAt: timestamp,
+    updatedByUid: actorUid,
     updateSource: NOTIFICATION_CAMPAIGN_UPDATE_SOURCE,
   };
 }
@@ -248,17 +311,46 @@ function buildNotificationCampaignDraftMutationReceipt({
   status,
   created = false,
   targetAudience = "",
+  sendBlocked = false,
+  sendBlockedReason = "",
+  deliveryLocked = false,
+  sendState = NOTIFICATION_CAMPAIGN_SEND_STATE,
 }) {
+  const archived = status === "archived";
+  const sent = status === "sent";
   return {
     ok: true,
     created,
     campaignId,
     status,
     targetAudience,
+    sendBlocked: archived || sent || sendBlocked,
+    sendBlockedReason: archived ?
+      (sendBlockedReason || NOTIFICATION_CAMPAIGN_SEND_BLOCKED_REASON) :
+      sent ? (sendBlockedReason || "campaign-already-sent") : sendBlockedReason,
+    deliveryLocked: archived || sent || deliveryLocked,
+    sendState: archived ? "archived" : sent ? NOTIFICATION_CAMPAIGN_SENT_STATE : sendState,
+  };
+}
+
+function buildNotificationCampaignBroadcastReceipt({
+  campaign,
+  queuedCount,
+  skippedCount,
+  actorUid = "",
+} = {}) {
+  return {
+    ok: true,
+    campaignId: campaign?.campaignId || "",
+    status: "sent",
+    targetAudience: campaign?.targetAudience || "",
+    queuedCount: Number.isFinite(queuedCount) ? Math.max(0, Math.floor(queuedCount)) : 0,
+    skippedCount: Number.isFinite(skippedCount) ? Math.max(0, Math.floor(skippedCount)) : 0,
+    sentByUid: actorUid,
     sendBlocked: true,
-    sendBlockedReason: NOTIFICATION_CAMPAIGN_SEND_BLOCKED_REASON,
+    sendBlockedReason: "campaign-already-sent",
     deliveryLocked: true,
-    sendState: NOTIFICATION_CAMPAIGN_SEND_STATE,
+    sendState: NOTIFICATION_CAMPAIGN_SENT_STATE,
   };
 }
 
@@ -274,6 +366,9 @@ function normalizeNotificationCampaignDraft(docSnap) {
 
   const targetAudience = normalizeTargetAudience(data.targetAudience);
   const scheduledAtIso = scheduledAtIsoFromValue(data);
+  const status = data.status === "archived" ? "archived" : data.status === "sent" ? "sent" : "draft";
+  const sent = status === "sent";
+  const archived = status === "archived";
   return {
     campaignId,
     title,
@@ -283,21 +378,28 @@ function normalizeNotificationCampaignDraft(docSnap) {
     marketingConsentRequired:
       targetAudience === TARGET_AUDIENCE_MARKETING_OPT_IN_USERS ||
       data.marketingConsentRequired === true,
-    status: data.status === "archived" ? "archived" : "draft",
+    status,
     scheduledAtIso,
     notes: cleanOptionalText(data.notes, MAX_NOTES_LENGTH),
-    sendBlocked: true,
+    sendBlocked: sent || archived,
     sendBlockedReason: typeof data.sendBlockedReason === "string" && data.sendBlockedReason.trim() ?
-      data.sendBlockedReason.trim() :
-      NOTIFICATION_CAMPAIGN_SEND_BLOCKED_REASON,
-    deliveryLocked: true,
-    sendState: NOTIFICATION_CAMPAIGN_SEND_STATE,
+      (sent || archived ? data.sendBlockedReason.trim() : "") :
+      sent ? "campaign-already-sent" :
+        archived ? NOTIFICATION_CAMPAIGN_SEND_BLOCKED_REASON : "",
+    deliveryLocked: sent || archived,
+    sendState: typeof data.sendState === "string" && data.sendState.trim() ?
+      data.sendState.trim() :
+      data.status === "sent" ? NOTIFICATION_CAMPAIGN_SENT_STATE :
+        data.status === "archived" ? "archived" : NOTIFICATION_CAMPAIGN_SEND_STATE,
     createdByUid: typeof data.createdByUid === "string" ? data.createdByUid.trim() : "",
     updatedByUid: typeof data.updatedByUid === "string" ? data.updatedByUid.trim() : "",
     archivedByUid: typeof data.archivedByUid === "string" ? data.archivedByUid.trim() : "",
+    sentByUid: typeof data.sentByUid === "string" ? data.sentByUid.trim() : "",
     createdAtIso: timestampToIso(data.createdAt),
     updatedAtIso: timestampToIso(data.updatedAt),
     archivedAtIso: timestampToIso(data.archivedAt),
+    sentAtIso: timestampToIso(data.sentAt),
+    queuedCount: Number.isFinite(data.queuedCount) ? Math.max(0, Math.floor(data.queuedCount)) : 0,
   };
 }
 
@@ -325,11 +427,16 @@ module.exports = {
   NOTIFICATION_CAMPAIGNS_COLLECTION,
   NOTIFICATION_CAMPAIGN_SEND_BLOCKED_REASON,
   NOTIFICATION_CAMPAIGN_SEND_STATE,
+  NOTIFICATION_CAMPAIGN_SENT_STATE,
+  assertNotificationCampaignBroadcastReady,
   buildAdminNotificationCampaignDrafts,
+  buildNotificationCampaignBroadcastReceipt,
+  buildNotificationCampaignBroadcastUpdateValue,
   buildNotificationCampaignDraftArchiveValue,
   buildNotificationCampaignDraftMutationReceipt,
   buildNotificationCampaignDraftValue,
   normalizeNotificationCampaignDraft,
+  validateNotificationCampaignBroadcastInput,
   validateNotificationCampaignArchiveInput: validateNotificationCampaignDraftArchiveInput,
   validateNotificationCampaignDraftArchiveInput,
   validateNotificationCampaignDraftInput,

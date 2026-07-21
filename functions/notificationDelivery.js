@@ -8,6 +8,8 @@ const BOOKING_STATUS_DELIVERY_TEMPLATE_KEYS = new Set([
   "booking_request",
   "booking_accepted",
   "booking_rejected",
+  "booking_in_progress",
+  "booking_completed",
   "booking_expired",
   "booking_cancelled",
   "booking_rescheduled",
@@ -16,7 +18,10 @@ const BOOKING_STATUS_DELIVERY_TEMPLATE_KEYS = new Set([
 const ADMIN_PENDING_BOOKING_TEMPLATE_KEY = "admin_pending_booking";
 const BOOKING_REMINDER_TEMPLATE_KEY = "booking_reminder";
 const LOYALTY_REWARD_TEMPLATE_KEY = "loyalty_reward";
+const CAMPAIGN_DRAFT_TEMPLATE_KEY = "campaign_draft";
 const ADMIN_TEST_NOTIFICATION_TYPE = "admin_test_notification";
+const ANDROID_NOTIFICATION_CHANNEL_ID = "suds_notifications";
+const ANDROID_NOTIFICATION_CLICK_ACTION = "org.sudsmobile.app.NOTIFICATION_OPEN";
 
 const TERMINAL_TOKEN_ERROR_CODES = new Set([
   "messaging/invalid-registration-token",
@@ -230,6 +235,27 @@ function notificationDeliveryPreferenceSuppression(outbox = {}, settings = {}, p
   if (shouldBypassNotificationPreferenceSuppression(outbox)) return null;
 
   const templateKey = cleanDeliveryText(outbox.templateKey, 80);
+  if (templateKey === CAMPAIGN_DRAFT_TEMPLATE_KEY) {
+    const targetScope = cleanDeliveryText(outbox.targetScope, 80);
+    const requiresMarketingConsent =
+      (targetScope !== "test_users" && targetScope !== "self") ||
+      outbox.campaignSnapshot?.marketingConsentRequired === true ||
+      outbox.preferencesSnapshot?.marketingConsentRequired === true;
+    if (requiresMarketingConsent && settings.marketingEnabled === false) {
+      return {
+        deliveryState: "suppressed",
+        deliverySuppressionReason: "admin-marketing-disabled",
+      };
+    }
+    if (requiresMarketingConsent && preferences.marketingEnabled !== true) {
+      return {
+        deliveryState: "suppressed",
+        deliverySuppressionReason: "user-marketing-disabled",
+      };
+    }
+    if (outbox.preferencesSnapshot?.campaignBroadcast === true) return null;
+  }
+
   if (!templateEnabledForDelivery(settings, templateKey)) {
     return {
       deliveryState: "suppressed",
@@ -352,6 +378,10 @@ function buildNotificationPushMessage(outbox, tokenDeliveries) {
     },
     android: {
       priority: "high",
+      notification: {
+        channelId: ANDROID_NOTIFICATION_CHANNEL_ID,
+        clickAction: ANDROID_NOTIFICATION_CLICK_ACTION,
+      },
     },
     apns: {
       payload: {
@@ -496,6 +526,8 @@ function deliveryCompletionUpdate({
 
 module.exports = {
   DELIVERY_LEASE_MINUTES,
+  ANDROID_NOTIFICATION_CHANNEL_ID,
+  ANDROID_NOTIFICATION_CLICK_ACTION,
   MAX_DELIVERY_ATTEMPTS,
   MAX_DELIVERY_TOKENS_PER_USER,
   NOTIFICATION_QUIET_HOURS_TIME_ZONE,
