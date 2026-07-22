@@ -196,6 +196,33 @@ test("buildUserLoyalty preserves positive-price legacy completed washes", () => 
   assert.deepEqual(loyalty.stampHistory.map((item) => item.id), ["legacy-paid"]);
 });
 
+test("buildUserLoyalty includes active referral adjustments as auditable stamps", () => {
+  const loyalty = buildUserLoyalty({
+    now: new Date("2026-05-20T12:00:00.000Z"),
+    reservationDocs: [completedReservation("paid", 1)],
+    adjustmentDocs: [
+      doc("referral-friend-1", {
+        source: "referral",
+        label: "Bónus por amigo indicado",
+        points: 1,
+        status: "active",
+        occurredAt: "2026-05-10T12:00:00.000Z",
+      }),
+      doc("void-adjustment", {
+        source: "referral",
+        label: "Bónus anulado",
+        points: 1,
+        status: "void",
+        occurredAt: "2026-05-11T12:00:00.000Z",
+      }),
+    ],
+  });
+
+  assert.equal(loyalty.totalWashes, 2);
+  assert.deepEqual(loyalty.stampHistory.map((item) => item.id), ["referral-friend-1", "paid"]);
+  assert.equal(loyalty.stampHistory[0].points, 1);
+});
+
 test("buildLoyaltyRewardCode is deterministic for a user reward number", () => {
   assert.equal(buildLoyaltyRewardCode("uid-1234", 2), "SS-FREE-1234-0002");
 });

@@ -112,7 +112,19 @@ const {
   assertRedeemableLoyaltyRedemption,
   buildLoyaltyRewardCode,
   buildUserLoyalty,
+  isCompletedLoyaltyWash,
 } = require("./loyalty");
+const {
+  REFERRAL_INVITE_LIMIT,
+  assertReferralAttributionWindow,
+  assertReferralClaimAllowed,
+  buildMyReferralProgram,
+  buildReferralBonusAdjustment,
+  normalizeReferralCode,
+  normalizeReferralDocument,
+  normalizeReferralProfileDocument,
+  referralCodeCandidates,
+} = require("./referrals");
 const {
   buildLoyaltySettings,
   buildLoyaltyRedemptionMetadata,
@@ -244,6 +256,22 @@ function userBookingPresetsCollection(uid) {
 
 function userLoyaltyRedemptionsCollection(uid) {
   return db.collection("users").doc(uid).collection("loyalty_redemptions");
+}
+
+function userLoyaltyAdjustmentsCollection(uid) {
+  return db.collection("users").doc(uid).collection("loyalty_adjustments");
+}
+
+function referralProfileRef(uid) {
+  return db.collection("referral_profiles").doc(uid);
+}
+
+function referralCodeRef(code) {
+  return db.collection("referral_codes").doc(code);
+}
+
+function referralRef(referredUid) {
+  return db.collection("referrals").doc(referredUid);
 }
 
 function loyaltySettingsRef() {
@@ -412,6 +440,78 @@ function redeemReservedLoyaltyReward(tx, reservationData, reservationId) {
 
 function userDocument(uid) {
   return db.collection("users").doc(uid);
+}
+
+async function ensureReferralProfile(uid) {
+  let profile = null;
+  await db.runTransaction(async (tx) => {
+    const profileRef = referralProfileRef(uid);
+    const profileSnap = await tx.get(profileRef);
+    const existingProfile = normalizeReferralProfileDocument(profileSnap);
+    if (existingProfile) {
+      const codeRef = referralCodeRef(existingProfile.code);
+      const codeSnap = await tx.get(codeRef);
+      const codeOwnerUid = codeSnap.exists ? String(codeSnap.get("ownerUid") || "").trim() : "";
+      if (codeOwnerUid && codeOwnerUid !== uid) {
+        throw new HttpsError("already-exists", "Referral code belongs to another account");
+      }
+      if (!codeSnap.exists) {
+        tx.set(codeRef, {
+          code: existingProfile.code,
+          ownerUid: uid,
+          createdAt: FieldValue.serverTimestamp(),
+          updateSource: "referral-profile-repair",
+        });
+      }
+      profile = existingProfile;
+      return;
+    }
+
+    const candidateCodes = referralCodeCandidates(uid);
+    const candidateRefs = candidateCodes.map(referralCodeRef);
+    const candidateSnaps = await Promise.all(candidateRefs.map((ref) => tx.get(ref)));
+    const selectedIndex = candidateSnaps.findIndex((snap) => {
+      if (!snap.exists) return true;
+      return String(snap.get("ownerUid") || "").trim() === uid;
+    });
+    if (selectedIndex < 0) {
+      throw new HttpsError("resource-exhausted", "Could not allocate a referral code");
+    }
+
+    const code = candidateCodes[selectedIndex];
+    const timestamp = FieldValue.serverTimestamp();
+    tx.set(profileRef, {
+      ownerUid: uid,
+      code,
+      createdAt: timestamp,
+      updatedAt: timestamp,
+      updateSource: "mobile-referrals",
+    });
+    tx.set(candidateRefs[selectedIndex], {
+      ownerUid: uid,
+      code,
+      createdAt: timestamp,
+      updateSource: "mobile-referrals",
+    });
+    profile = {ownerUid: uid, code, createdAt: ""};
+  });
+  return profile;
+}
+
+async function loadMyReferralProgram(uid) {
+  const profile = await ensureReferralProfile(uid);
+  const [referredBySnap, invitedSnap] = await Promise.all([
+    referralRef(uid).get(),
+    db.collection("referrals")
+      .where("referrerUid", "==", uid)
+      .limit(REFERRAL_INVITE_LIMIT)
+      .get(),
+  ]);
+  return buildMyReferralProgram({
+    profile,
+    referredBy: referredBySnap,
+    invitedDocs: invitedSnap.docs,
+  });
 }
 
 async function deleteManagedProfilePhotoObject(bucket, uid, storagePath, reason) {
@@ -955,12 +1055,14 @@ exports.getMyReservations = onCall(async (request) => {
   const [
     servicesSnap,
     redemptionSnap,
+    loyaltyAdjustmentSnap,
     loyaltySettingsSnap,
     legacyLoyaltySettingsSnap,
     ...reservationSnaps
   ] = await Promise.all([
     db.collection("services").get(),
     userLoyaltyRedemptionsCollection(uid).limit(100).get(),
+    userLoyaltyAdjustmentsCollection(uid).limit(100).get(),
     loyaltySettingsRef().get(),
     legacyLoyaltySettingsRef().get(),
     ...historyReservationQueries.map((query) => query.get()),
@@ -980,6 +1082,7 @@ exports.getMyReservations = onCall(async (request) => {
   );
   const loyalty = buildUserLoyalty({
     reservationDocs: loyaltyReservationDocs,
+    adjustmentDocs: loyaltyAdjustmentSnap.docs,
     redemptionDocs: redemptionSnap.docs,
     loyaltySettings,
   });
@@ -996,8 +1099,15 @@ exports.getMyLoyalty = onCall(async (request) => {
   const uid = assertAuthenticatedUid(request);
   const email = authenticatedEmail(request);
 
-  const [redemptionSnap, loyaltySettingsSnap, legacyLoyaltySettingsSnap, ...reservationSnaps] = await Promise.all([
+  const [
+    redemptionSnap,
+    loyaltyAdjustmentSnap,
+    loyaltySettingsSnap,
+    legacyLoyaltySettingsSnap,
+    ...reservationSnaps
+  ] = await Promise.all([
     userLoyaltyRedemptionsCollection(uid).limit(100).get(),
+    userLoyaltyAdjustmentsCollection(uid).limit(100).get(),
     loyaltySettingsRef().get(),
     legacyLoyaltySettingsRef().get(),
     ...userLoyaltyReservationQueries(uid, email).map((query) => query.get()),
@@ -1008,9 +1118,91 @@ exports.getMyLoyalty = onCall(async (request) => {
 
   return buildUserLoyalty({
     reservationDocs: uniqueReservationDocsFromSnaps(reservationSnaps),
+    adjustmentDocs: loyaltyAdjustmentSnap.docs,
     redemptionDocs: redemptionSnap.docs,
     loyaltySettings,
   });
+});
+
+exports.getMyReferral = onCall(async (request) => {
+  const uid = assertAuthenticatedUid(request);
+  return loadMyReferralProgram(uid);
+});
+
+exports.claimMyReferralCode = onCall(async (request) => {
+  const uid = assertAuthenticatedUid(request);
+  const code = normalizeReferralCode(request.data?.code);
+  const [initialCodeSnap, initialReferralSnap] = await Promise.all([
+    referralCodeRef(code).get(),
+    referralRef(uid).get(),
+  ]);
+  const initialReferrerUid = initialCodeSnap.exists ?
+    String(initialCodeSnap.get("ownerUid") || "").trim() :
+    "";
+  if (!initialReferrerUid) {
+    throw new HttpsError("not-found", "Referral code was not found");
+  }
+  if (initialReferrerUid === uid) {
+    throw new HttpsError("failed-precondition", "You cannot use your own referral code");
+  }
+  const initialExistingReferral = normalizeReferralDocument(initialReferralSnap);
+  const initialAction = assertReferralClaimAllowed({
+    uid,
+    referrerUid: initialReferrerUid,
+    existingReferral: initialExistingReferral,
+  });
+  if (initialAction === "existing") {
+    return {ok: true, referral: await loadMyReferralProgram(uid)};
+  }
+
+  const caller = await auth.getUser(uid);
+  assertReferralAttributionWindow(caller);
+  const referrer = await auth.getUser(initialReferrerUid);
+  if (referrer.disabled) {
+    throw new HttpsError("failed-precondition", "Referral code is not active");
+  }
+
+  const email = authenticatedEmail(request);
+  await db.runTransaction(async (tx) => {
+    const currentReferralRef = referralRef(uid);
+    const reservationQueries = userLoyaltyReservationQueries(uid, email);
+    const [currentReferralSnap, currentCodeSnap, ...reservationSnaps] = await Promise.all([
+      tx.get(currentReferralRef),
+      tx.get(referralCodeRef(code)),
+      ...reservationQueries.map((query) => tx.get(query)),
+    ]);
+    const referrerUid = currentCodeSnap.exists ? String(currentCodeSnap.get("ownerUid") || "").trim() : "";
+    if (referrerUid !== initialReferrerUid) {
+      throw new HttpsError("not-found", "Referral code was not found");
+    }
+    const existingReferral = normalizeReferralDocument(currentReferralSnap);
+    const hasEligibleCompletion = uniqueReservationDocsFromSnaps(reservationSnaps)
+      .some((docSnap) => isCompletedLoyaltyWash(docSnap.data(), new Date()));
+    const action = assertReferralClaimAllowed({
+      uid,
+      referrerUid,
+      existingReferral,
+      hasEligibleCompletion,
+    });
+    if (action === "existing") return;
+
+    const timestamp = FieldValue.serverTimestamp();
+    tx.set(currentReferralRef, {
+      referredUid: uid,
+      referrerUid,
+      code,
+      status: "claimed",
+      claimedAt: timestamp,
+      createdAt: timestamp,
+      updatedAt: timestamp,
+      updateSource: "mobile-referrals",
+    });
+  });
+
+  return {
+    ok: true,
+    referral: await loadMyReferralProgram(uid),
+  };
 });
 
 exports.redeemMyLoyaltyReward = onCall(async (request) => {
@@ -1022,11 +1214,13 @@ exports.redeemMyLoyaltyReward = onCall(async (request) => {
   await db.runTransaction(async (tx) => {
     const [
       redemptionSnap,
+      loyaltyAdjustmentSnap,
       loyaltySettingsSnap,
       legacyLoyaltySettingsSnap,
       ...reservationSnaps
     ] = await Promise.all([
       tx.get(userLoyaltyRedemptionsCollection(uid).limit(100)),
+      tx.get(userLoyaltyAdjustmentsCollection(uid).limit(100)),
       tx.get(loyaltySettingsRef()),
       tx.get(legacyLoyaltySettingsRef()),
       ...userLoyaltyReservationQueries(uid, email).map((query) => tx.get(query)),
@@ -1037,6 +1231,7 @@ exports.redeemMyLoyaltyReward = onCall(async (request) => {
     );
     const currentLoyalty = buildUserLoyalty({
       reservationDocs,
+      adjustmentDocs: loyaltyAdjustmentSnap.docs,
       redemptionDocs: redemptionSnap.docs,
       loyaltySettings,
     });
@@ -1112,6 +1307,7 @@ exports.redeemMyLoyaltyReward = onCall(async (request) => {
     };
     loyalty = buildUserLoyalty({
       reservationDocs,
+      adjustmentDocs: loyaltyAdjustmentSnap.docs,
       redemptionDocs: [...redemptionSnap.docs, previewRedemptionDoc],
       now,
       loyaltySettings,
@@ -1963,9 +2159,12 @@ exports.getAdminLoyaltySettings = onCall(async (request) => {
 exports.getAdminLoyaltyReport = onCall(async (request) => {
   await assertAdminRequest(request);
 
-  const [reservationSnap, settingsSnap, legacySettingsSnap] = await Promise.all([
+  const [reservationSnap, adjustmentSnap, settingsSnap, legacySettingsSnap] = await Promise.all([
     db.collection("reservations")
       .orderBy("slotStart", "desc")
+      .limit(ADMIN_LOYALTY_RESERVATION_LIMIT)
+      .get(),
+    db.collectionGroup("loyalty_adjustments")
       .limit(ADMIN_LOYALTY_RESERVATION_LIMIT)
       .get(),
     loyaltySettingsRef().get(),
@@ -1976,6 +2175,7 @@ exports.getAdminLoyaltyReport = onCall(async (request) => {
   );
   return buildAdminLoyaltyReport({
     reservationDocs: reservationSnap.docs,
+    adjustmentDocs: adjustmentSnap.docs,
     loyaltySettings,
     reservationLimit: ADMIN_LOYALTY_RESERVATION_LIMIT,
   });
@@ -2754,23 +2954,46 @@ exports.completeReservation = onCall(async (request) => {
     const reviewRef = customerUid ?
       db.collection("reservation_reviews").doc(buildReservationReviewId(data.reservationId, customerUid)) :
       null;
+    const customerReferralRef = customerUid ? referralRef(customerUid) : null;
     const [
       notificationSettingsSnap,
       notificationPreferencesSnap,
       notificationUserSnap,
       reviewSnap,
       existingOutboxSnap,
+      customerReferralSnap,
     ] = customerUid ? await Promise.all([
       tx.get(notificationSettingsRef()),
       tx.get(userNotificationPreferencesRef(customerUid)),
       tx.get(userDocument(customerUid)),
       tx.get(reviewRef),
       tx.get(outboxRef),
-    ]) : [null, null, null, null, null];
+      tx.get(customerReferralRef),
+    ]) : [null, null, null, null, null, null];
 
     reservationCode = String(reservationData.reservationCode || "").trim();
     const paymentStatus = completionPaymentStatus(reservationData);
     const loyaltyStampGranted = reservationEarnsLoyaltyStamp(reservationData);
+    const claimedReferral = normalizeReferralDocument(customerReferralSnap);
+    let referralQualification = null;
+    if (loyaltyStampGranted && claimedReferral?.status === "claimed") {
+      const referrerUid = claimedReferral.referrerUid;
+      const referredAdjustmentRef = userLoyaltyAdjustmentsCollection(customerUid).doc("referral-welcome");
+      const referrerAdjustmentRef = userLoyaltyAdjustmentsCollection(referrerUid)
+        .doc(`referral-${customerUid}`);
+      const [referredAdjustmentSnap, referrerAdjustmentSnap] = await Promise.all([
+        tx.get(referredAdjustmentRef),
+        tx.get(referrerAdjustmentRef),
+      ]);
+      referralQualification = {
+        referrerUid,
+        referredAdjustmentRef,
+        referrerAdjustmentRef,
+        referredAdjustmentExists: referredAdjustmentSnap.exists,
+        referrerAdjustmentExists: referrerAdjustmentSnap.exists,
+      };
+    }
+
     tx.update(reservationRef, {
       status: "completed",
       paymentStatus,
@@ -2782,6 +3005,33 @@ exports.completeReservation = onCall(async (request) => {
       updatedAt: FieldValue.serverTimestamp(),
       updateSource: "admin-mobile-completion",
     });
+    if (referralQualification) {
+      const timestamp = FieldValue.serverTimestamp();
+      tx.update(customerReferralRef, {
+        status: "qualified",
+        qualifiedAt: timestamp,
+        qualifyingReservationId: data.reservationId,
+        qualifiedByUid: request.auth.uid,
+        updatedAt: timestamp,
+        updateSource: "admin-mobile-completion",
+      });
+      if (!referralQualification.referredAdjustmentExists) {
+        tx.set(referralQualification.referredAdjustmentRef, buildReferralBonusAdjustment({
+          ownerUid: customerUid,
+          relatedUid: referralQualification.referrerUid,
+          role: "referred",
+          timestamp,
+        }));
+      }
+      if (!referralQualification.referrerAdjustmentExists) {
+        tx.set(referralQualification.referrerAdjustmentRef, buildReferralBonusAdjustment({
+          ownerUid: referralQualification.referrerUid,
+          relatedUid: customerUid,
+          role: "referrer",
+          timestamp,
+        }));
+      }
+    }
     redeemReservedLoyaltyReward(tx, reservationData, data.reservationId);
     enqueueReservationNotification(tx, {
       db,

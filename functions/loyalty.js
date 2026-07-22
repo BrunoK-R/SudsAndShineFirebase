@@ -79,6 +79,27 @@ function normalizeLoyaltyReservationDocument(doc, now) {
   };
 }
 
+function normalizeLoyaltyAdjustmentDocument(doc) {
+  if (!doc?.exists) return null;
+
+  const data = doc.data();
+  if (!data || typeof data !== "object") return null;
+  if (normalizeStatus(data.status, "active") !== "active") return null;
+  const points = Number(data.points);
+  if (!Number.isInteger(points) || points <= 0 || points > 50) return null;
+  const occurredAt = timestampToIsoString(data.occurredAt || data.createdAt);
+  if (!occurredAt) return null;
+
+  return {
+    id: doc.id,
+    serviceId: String(data.source || "adjustment").trim() || "adjustment",
+    serviceName: String(data.label || "Bónus de fidelização").trim() || "Bónus de fidelização",
+    slotStart: occurredAt,
+    slotEnd: occurredAt,
+    points,
+  };
+}
+
 function normalizeRedemptionDocument(doc) {
   if (!doc?.exists) return null;
 
@@ -208,6 +229,7 @@ function assertRedeemableLoyaltyRedemption(redemptionSnap, uid) {
 
 function buildUserLoyalty({
   reservationDocs,
+  adjustmentDocs = [],
   redemptionDocs = [],
   now = new Date(),
   rewardInterval = DEFAULT_REWARD_INTERVAL,
@@ -215,9 +237,13 @@ function buildUserLoyalty({
 }) {
   const settings = normalizeLoyaltySettings(loyaltySettings, rewardInterval);
   const targetWashes = settings.stampsRequired;
-  const stampHistory = (reservationDocs || [])
+  const reservationStamps = (reservationDocs || [])
     .map((doc) => normalizeLoyaltyReservationDocument(doc, now))
-    .filter(Boolean)
+    .filter(Boolean);
+  const adjustmentStamps = (adjustmentDocs || [])
+    .map(normalizeLoyaltyAdjustmentDocument)
+    .filter(Boolean);
+  const stampHistory = [...reservationStamps, ...adjustmentStamps]
     .sort((left, right) => right.slotStart.localeCompare(left.slotStart));
 
   const redemptions = (redemptionDocs || [])
@@ -226,7 +252,7 @@ function buildUserLoyalty({
     .sort((left, right) => right.rewardNumber - left.rewardNumber)
     .slice(0, USER_REDEMPTION_LIMIT);
 
-  const totalWashes = stampHistory.length;
+  const totalWashes = stampHistory.reduce((total, stamp) => total + stamp.points, 0);
   const completedRewards = Math.floor(totalWashes / targetWashes);
   const claimedRewards = redemptions.filter((redemption) =>
     ACTIVE_REDEMPTION_STATUS_VALUES.includes(redemption.status),
@@ -298,6 +324,7 @@ module.exports = {
   buildUserLoyalty,
   isCompletedLoyaltyWash,
   normalizeLoyaltySettings,
+  normalizeLoyaltyAdjustmentDocument,
   normalizeRewardCodeInput,
   normalizeLoyaltyReservationDocument,
   normalizeRedemptionDocument,

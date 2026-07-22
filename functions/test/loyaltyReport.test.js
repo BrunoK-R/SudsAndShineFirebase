@@ -44,6 +44,32 @@ test("buildAdminLoyaltyReport marks the reward boundary and current totals", () 
   assert.equal(reward.stampPosition, 10);
 });
 
+test("buildAdminLoyaltyReport includes referral ledger stamps in reward boundaries", () => {
+  const report = buildAdminLoyaltyReport({
+    reservationDocs: Array.from({length: 9}, (_, index) => completedReservation(index + 1)),
+    adjustmentDocs: [
+      doc("referral-friend-1", {
+        ownerUid: "user-1",
+        source: "referral",
+        label: "Bónus por amigo indicado",
+        points: 1,
+        status: "active",
+        occurredAt: "2026-07-10T10:00:00.000Z",
+      }),
+    ],
+    loyaltySettings: {stampsRequired: 10},
+  });
+
+  assert.equal(report.source, "loyalty_ledger");
+  assert.equal(report.summary.qualifyingWashes, 9);
+  assert.equal(report.summary.bonusStamps, 1);
+  assert.equal(report.summary.totalStamps, 10);
+  assert.equal(report.summary.rewardsEarned, 1);
+  const adjustment = report.events.find((event) => event.kind === "stamp_adjustment");
+  assert.equal(adjustment.serviceName, "Bónus por amigo indicado");
+  assert.equal(adjustment.stampPosition, 10);
+});
+
 test("buildAdminLoyaltyReport audits reserved redeemed and released rewards", () => {
   const report = buildAdminLoyaltyReport({
     reservationDocs: [

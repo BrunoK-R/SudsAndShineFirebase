@@ -11,6 +11,7 @@ const RELEASED_STATUSES = new Set([
   "expirado",
 ]);
 const DEFAULT_RESERVATION_LIMIT = 2000;
+const DEFAULT_ADJUSTMENT_LIMIT = 2000;
 const DEFAULT_EVENT_LIMIT = 200;
 
 function cleanText(value, maxLength = 160) {
@@ -87,6 +88,36 @@ function reservationEarnedStamp(reservation) {
   return Number.isFinite(reservation.priceCents) && reservation.priceCents > 0;
 }
 
+function normalizeAdjustment(docSnap) {
+  if (!docSnap) return null;
+  const data = typeof docSnap.data === "function" ? docSnap.data() || {} : docSnap.data || docSnap;
+  const id = cleanText(docSnap.id || data.id, 160);
+  const customerUid = cleanText(data.ownerUid, 128);
+  const points = Number(data.points);
+  const occurredAt = firstTimestamp(data, ["occurredAt", "createdAt", "updatedAt"]);
+  if (
+    !id ||
+    !customerUid ||
+    normalizeStatus(data.status || "active") !== "active" ||
+    !Number.isInteger(points) ||
+    points <= 0 ||
+    points > 50 ||
+    !occurredAt
+  ) return null;
+
+  return {
+    id,
+    customerKey: customerUid,
+    customerUid,
+    customerName: "Cliente",
+    customerEmail: "",
+    label: cleanText(data.label || "Ajuste de fidelização", 160),
+    points,
+    occurredAt,
+    status: "active",
+  };
+}
+
 function rewardEventKind(reservation) {
   if (!reservation.loyaltyRewardApplied) return "";
   if (COMPLETED_STATUSES.has(reservation.status)) return "reward_redeemed";
@@ -114,10 +145,32 @@ function baseEvent(reservation, kind, occurredAt) {
   };
 }
 
+function baseAdjustmentEvent(adjustment, kind, pointNumber) {
+  return {
+    id: `${kind}:${adjustment.id}:${pointNumber}`,
+    kind,
+    occurredAt: adjustment.occurredAt,
+    customerUid: adjustment.customerUid,
+    customerName: adjustment.customerName,
+    customerEmail: adjustment.customerEmail,
+    reservationId: "",
+    reservationCode: "",
+    serviceName: adjustment.label,
+    rewardCode: "",
+    rewardDescription: "",
+    status: adjustment.status,
+    stampPosition: 0,
+    stampsRequired: 0,
+    rewardNumber: 0,
+  };
+}
+
 function buildAdminLoyaltyReport({
   reservationDocs = [],
+  adjustmentDocs = [],
   loyaltySettings = {},
   reservationLimit = DEFAULT_RESERVATION_LIMIT,
+  adjustmentLimit = DEFAULT_ADJUSTMENT_LIMIT,
   eventLimit = DEFAULT_EVENT_LIMIT,
 } = {}) {
   const stampsRequiredValue = Number(loyaltySettings?.stampsRequired);
@@ -131,10 +184,15 @@ function buildAdminLoyaltyReport({
       const timeOrder = left.slotStart.localeCompare(right.slotStart);
       return timeOrder === 0 ? left.id.localeCompare(right.id) : timeOrder;
     });
+  const adjustments = (adjustmentDocs || [])
+    .map(normalizeAdjustment)
+    .filter(Boolean);
   const stampCountByCustomer = new Map();
   const customerKeys = new Set();
   const events = [];
+  const stampActivities = [];
   let qualifyingWashes = 0;
+  let bonusStamps = 0;
   let rewardsEarned = 0;
   let rewardsRedeemed = 0;
   let rewardsReserved = 0;
@@ -142,27 +200,15 @@ function buildAdminLoyaltyReport({
 
   for (const reservation of reservations) {
     if (reservationEarnedStamp(reservation)) {
-      customerKeys.add(reservation.customerKey);
-      qualifyingWashes += 1;
-      const customerStampCount = (stampCountByCustomer.get(reservation.customerKey) || 0) + 1;
-      stampCountByCustomer.set(reservation.customerKey, customerStampCount);
-      const stampPosition = ((customerStampCount - 1) % stampsRequired) + 1;
-      events.push({
-        ...baseEvent(reservation, "stamp_granted", reservation.completedAt || reservation.slotStart),
-        stampPosition,
-        stampsRequired,
+      stampActivities.push({
+        id: reservation.id,
+        customerKey: reservation.customerKey,
+        customerUid: reservation.customerUid,
+        points: 1,
+        occurredAt: reservation.completedAt || reservation.slotStart,
+        baseEvent: (kind) => baseEvent(reservation, kind, reservation.completedAt || reservation.slotStart),
+        adjustment: false,
       });
-      if (stampPosition === stampsRequired) {
-        rewardsEarned += 1;
-        const rewardNumber = Math.floor(customerStampCount / stampsRequired);
-        events.push({
-          ...baseEvent(reservation, "reward_earned", reservation.completedAt || reservation.slotStart),
-          rewardCode: reservation.customerUid ? buildLoyaltyRewardCode(reservation.customerUid, rewardNumber) : "",
-          rewardNumber,
-          stampPosition,
-          stampsRequired,
-        });
-      }
     }
 
     const kind = rewardEventKind(reservation);
@@ -172,6 +218,49 @@ function buildAdminLoyaltyReport({
     if (kind === "reward_reserved") rewardsReserved += 1;
     if (kind === "reward_released") rewardsReleased += 1;
     events.push(baseEvent(reservation, kind, reservation.completedAt || reservation.updatedAt || reservation.slotStart));
+  }
+
+  for (const adjustment of adjustments) {
+    stampActivities.push({
+      id: adjustment.id,
+      customerKey: adjustment.customerKey,
+      customerUid: adjustment.customerUid,
+      points: adjustment.points,
+      occurredAt: adjustment.occurredAt,
+      baseEvent: (kind, pointNumber) => baseAdjustmentEvent(adjustment, kind, pointNumber),
+      adjustment: true,
+    });
+  }
+
+  stampActivities.sort((left, right) => {
+    const timeOrder = left.occurredAt.localeCompare(right.occurredAt);
+    return timeOrder === 0 ? left.id.localeCompare(right.id) : timeOrder;
+  });
+  for (const activity of stampActivities) {
+    customerKeys.add(activity.customerKey);
+    for (let pointNumber = 1; pointNumber <= activity.points; pointNumber += 1) {
+      if (activity.adjustment) bonusStamps += 1;
+      else qualifyingWashes += 1;
+      const customerStampCount = (stampCountByCustomer.get(activity.customerKey) || 0) + 1;
+      stampCountByCustomer.set(activity.customerKey, customerStampCount);
+      const stampPosition = ((customerStampCount - 1) % stampsRequired) + 1;
+      events.push({
+        ...activity.baseEvent(activity.adjustment ? "stamp_adjustment" : "stamp_granted", pointNumber),
+        stampPosition,
+        stampsRequired,
+      });
+      if (stampPosition === stampsRequired) {
+        rewardsEarned += 1;
+        const rewardNumber = Math.floor(customerStampCount / stampsRequired);
+        events.push({
+          ...activity.baseEvent("reward_earned", pointNumber),
+          rewardCode: activity.customerUid ? buildLoyaltyRewardCode(activity.customerUid, rewardNumber) : "",
+          rewardNumber,
+          stampPosition,
+          stampsRequired,
+        });
+      }
+    }
   }
 
   const recentEvents = events
@@ -184,10 +273,12 @@ function buildAdminLoyaltyReport({
   const occurredTimes = events.map((event) => event.occurredAt).filter(Boolean).sort();
 
   return {
-    source: reservations.length > 0 ? "reservations" : "empty",
+    source: reservations.length > 0 || adjustments.length > 0 ? "loyalty_ledger" : "empty",
     summary: {
       stampsRequired,
       qualifyingWashes,
+      bonusStamps,
+      totalStamps: qualifyingWashes + bonusStamps,
       rewardsEarned,
       rewardsRedeemed,
       rewardsReserved,
@@ -195,7 +286,8 @@ function buildAdminLoyaltyReport({
       estimatedAvailableRewards: Math.max(0, rewardsEarned - rewardsRedeemed - rewardsReserved),
       activeCustomers: customerKeys.size,
       reservationsScanned: reservations.length,
-      truncated: reservationDocs.length >= reservationLimit,
+      adjustmentsScanned: adjustments.length,
+      truncated: reservationDocs.length >= reservationLimit || adjustmentDocs.length >= adjustmentLimit,
       periodStart: occurredTimes[0] || "",
       periodEnd: occurredTimes[occurredTimes.length - 1] || "",
     },
@@ -204,9 +296,11 @@ function buildAdminLoyaltyReport({
 }
 
 module.exports = {
+  DEFAULT_ADJUSTMENT_LIMIT,
   DEFAULT_EVENT_LIMIT,
   DEFAULT_RESERVATION_LIMIT,
   buildAdminLoyaltyReport,
+  normalizeAdjustment,
   normalizeReservation,
   reservationEarnedStamp,
   rewardEventKind,
