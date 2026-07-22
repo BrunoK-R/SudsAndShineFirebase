@@ -211,11 +211,18 @@ function normalizeReservationDocument(doc, servicesById, reviewsByReservationId,
     rejectedAt: timestampToIso(data.rejectedAt) || null,
     rejectionReason: String(data.rejectionReason || "").trim(),
     acceptedAt: timestampToIso(data.acceptedAt) || null,
+    startedAt: timestampToIso(data.startedAt) || null,
+    completedAt: timestampToIso(data.completedAt) || null,
+    paymentConfirmedAt: timestampToIso(data.paymentConfirmedAt) || null,
     pendingExpiresAt: timestampToIso(data.pendingExpiresAt) || null,
     rescheduledAt: timestampToIso(data.rescheduledAt) || null,
     previousSlotStart: String(data.previousSlotStart || "").trim() || null,
     previousSlotEnd: String(data.previousSlotEnd || "").trim() || null,
     rescheduleCount: normalizeRescheduleCount(data.rescheduleCount),
+    loyaltyRewardApplied: data.loyaltyRewardApplied === true,
+    loyaltyRewardCode: String(data.loyaltyRewardCode || "").trim(),
+    loyaltyRewardDescription: String(data.loyaltyRewardDescription || "").trim(),
+    loyaltyStampGranted: typeof data.loyaltyStampGranted === "boolean" ? data.loyaltyStampGranted : null,
   };
 }
 

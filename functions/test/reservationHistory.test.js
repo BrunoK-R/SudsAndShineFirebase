@@ -168,6 +168,42 @@ test("buildUserReservationHistory exposes normalized payment status", () => {
   assert.equal(history.reservations.find((item) => item.id === "reservation-2").paymentStatus, "paid");
 });
 
+test("buildUserReservationHistory exposes owner-visible lifecycle and loyalty audit", () => {
+  const history = buildUserReservationHistory({
+    now: new Date("2026-05-20T12:00:00.000Z"),
+    serviceDocs: [],
+    reservationDocs: [
+      doc("reservation-1", {
+        reservationCode: "SS-ABCDEFGH",
+        serviceId: "standard",
+        serviceName: "Lavagem Standard",
+        slotStart: "2026-05-19T10:00:00.000Z",
+        slotEnd: "2026-05-19T10:30:00.000Z",
+        status: "completed",
+        paymentStatus: "covered_by_loyalty",
+        vehicleType: "passageiros",
+        acceptedAt: "2026-05-18T09:00:00.000Z",
+        startedAt: "2026-05-19T10:02:00.000Z",
+        completedAt: "2026-05-19T10:28:00.000Z",
+        paymentConfirmedAt: "2026-05-19T10:28:00.000Z",
+        loyaltyRewardApplied: true,
+        loyaltyRewardCode: " SS-FREE-0001 ",
+        loyaltyRewardDescription: " 1 lavagem grátis ",
+        loyaltyStampGranted: false,
+      }),
+    ],
+  });
+
+  const reservation = history.reservations[0];
+  assert.equal(reservation.startedAt, "2026-05-19T10:02:00.000Z");
+  assert.equal(reservation.completedAt, "2026-05-19T10:28:00.000Z");
+  assert.equal(reservation.paymentConfirmedAt, "2026-05-19T10:28:00.000Z");
+  assert.equal(reservation.loyaltyRewardApplied, true);
+  assert.equal(reservation.loyaltyRewardCode, "SS-FREE-0001");
+  assert.equal(reservation.loyaltyRewardDescription, "1 lavagem grátis");
+  assert.equal(reservation.loyaltyStampGranted, false);
+});
+
 test("buildUserReservationHistory exposes reservation change audit metadata", () => {
   const history = buildUserReservationHistory({
     now: new Date("2026-05-20T12:00:00.000Z"),
