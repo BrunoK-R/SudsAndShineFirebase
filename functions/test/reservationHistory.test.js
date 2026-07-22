@@ -31,6 +31,7 @@ test("buildUserReservationHistory includes review metadata for reviewed reservat
         slotEnd: "2026-05-18T10:45:00.000Z",
         status: "completed",
         vehicleType: "suv",
+        userVehicleId: "vehicle-1",
       }),
       doc("reservation-2", {
         reservationCode: "SS-HGFEDCBA",
@@ -55,6 +56,7 @@ test("buildUserReservationHistory includes review metadata for reviewed reservat
 
   const reviewed = history.reservations.find((reservation) => reservation.id === "reservation-1");
   assert.equal(reviewed.reviewed, true);
+  assert.equal(reviewed.userVehicleId, "vehicle-1");
   assert.equal(reviewed.reviewRating, 5);
   assert.deepEqual(reviewed.reviewTags, ["Qualidade", "Rápido"]);
   assert.equal(reviewed.reviewComment, "Ficou impecável.");

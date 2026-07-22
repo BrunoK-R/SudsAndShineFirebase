@@ -61,6 +61,14 @@ const {
   validateVehiclePayload,
 } = require("./vehicleRegistry");
 const {
+  MAX_BOOKING_PRESETS,
+  assertBookingPresetId,
+  bookingPresetId,
+  buildUserBookingPresetList,
+  normalizeUserBookingPresetDocument,
+  validateUserBookingPresetInput,
+} = require("./bookingPresets");
+const {
   buildUserProfile,
   validateUserProfilePayload,
 } = require("./userProfile");
@@ -221,6 +229,10 @@ function assertAuthenticatedUid(request) {
 
 function userVehiclesCollection(uid) {
   return db.collection("users").doc(uid).collection("vehicles");
+}
+
+function userBookingPresetsCollection(uid) {
+  return db.collection("users").doc(uid).collection("booking_presets");
 }
 
 function userLoyaltyRedemptionsCollection(uid) {
@@ -1369,6 +1381,73 @@ exports.getMyVehicles = onCall(async (request) => {
     .get();
 
   return buildUserVehicleList(vehiclesSnap.docs);
+});
+
+exports.getMyBookingPresets = onCall(async (request) => {
+  const uid = assertAuthenticatedUid(request);
+  const presetsSnap = await userBookingPresetsCollection(uid)
+    .orderBy("updatedAt", "desc")
+    .limit(MAX_BOOKING_PRESETS)
+    .get();
+
+  return buildUserBookingPresetList(presetsSnap.docs);
+});
+
+exports.upsertMyBookingPreset = onCall(async (request) => {
+  const uid = assertAuthenticatedUid(request);
+  const data = validateUserBookingPresetInput(request.data);
+  const presetId = data.presetId || bookingPresetId(data);
+  const presetRef = userBookingPresetsCollection(uid).doc(presetId);
+  const now = admin.firestore.FieldValue.serverTimestamp();
+
+  await db.runTransaction(async (tx) => {
+    const [presetSnap, presetsSnap, vehicleSnap] = await Promise.all([
+      tx.get(presetRef),
+      tx.get(userBookingPresetsCollection(uid).limit(MAX_BOOKING_PRESETS + 1)),
+      data.userVehicleId ? tx.get(userVehiclesCollection(uid).doc(data.userVehicleId)) : null,
+    ]);
+    if (!presetSnap.exists && presetsSnap.size >= MAX_BOOKING_PRESETS) {
+      throw new HttpsError("failed-precondition", `A maximum of ${MAX_BOOKING_PRESETS} presets is allowed`);
+    }
+    if (data.userVehicleId && !vehicleSnap?.exists) {
+      throw new HttpsError("not-found", "Saved vehicle not found");
+    }
+
+    tx.set(
+      presetRef,
+      {
+        label: data.label,
+        serviceId: data.serviceId,
+        extraIds: data.extraIds,
+        userVehicleId: data.userVehicleId,
+        vehicleType: data.vehicleType,
+        vehicleLabel: data.vehicleLabel,
+        ownerUid: uid,
+        createdAt: presetSnap.exists ? presetSnap.get("createdAt") || now : now,
+        updatedAt: now,
+        source: "mobile-app",
+      },
+      {merge: true},
+    );
+  });
+
+  const savedSnap = await presetRef.get();
+  return {
+    preset: normalizeUserBookingPresetDocument(savedSnap),
+    maxPresets: MAX_BOOKING_PRESETS,
+  };
+});
+
+exports.deleteMyBookingPreset = onCall(async (request) => {
+  const uid = assertAuthenticatedUid(request);
+  const presetId = assertBookingPresetId(request.data?.presetId || request.data?.id);
+  const presetRef = userBookingPresetsCollection(uid).doc(presetId);
+  const presetSnap = await presetRef.get();
+  if (!presetSnap.exists) {
+    throw new HttpsError("not-found", "Booking preset not found");
+  }
+  await presetRef.delete();
+  return {ok: true, presetId};
 });
 
 exports.getMyProfile = onCall(async (request) => {
