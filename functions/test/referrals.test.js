@@ -4,6 +4,7 @@ const {
   REFERRAL_ATTRIBUTION_DAYS,
   assertReferralAttributionWindow,
   assertReferralClaimAllowed,
+  buildReferralClaimEligibility,
   buildMyReferralProgram,
   buildReferralBonusAdjustment,
   buildReferralCode,
@@ -37,6 +38,23 @@ test("attribution window accepts a new account and rejects an old account", () =
   assert.throws(() => assertReferralAttributionWindow({
     metadata: {creationTime: "2026-06-01T12:00:00.000Z"},
   }, now), new RegExp(String(REFERRAL_ATTRIBUTION_DAYS)));
+});
+
+test("claim eligibility explains linked and expired attribution states", () => {
+  const now = new Date("2026-07-22T12:00:00.000Z");
+  assert.deepEqual(buildReferralClaimEligibility({
+    authUser: {metadata: {creationTime: "2026-07-20T12:00:00.000Z"}},
+    now,
+  }), {canClaimCode: true, claimIneligibleReason: ""});
+  assert.deepEqual(buildReferralClaimEligibility({
+    authUser: {metadata: {creationTime: "2026-05-20T12:00:00.000Z"}},
+    now,
+  }), {canClaimCode: false, claimIneligibleReason: "account_too_old"});
+  assert.deepEqual(buildReferralClaimEligibility({
+    authUser: {metadata: {creationTime: "2026-07-20T12:00:00.000Z"}},
+    hasExistingAttribution: true,
+    now,
+  }), {canClaimCode: false, claimIneligibleReason: "already_linked"});
 });
 
 test("claim guard blocks self-referral, replacement, and claims after a paid completion", () => {
@@ -92,6 +110,8 @@ test("program exposes transparent aggregate and invitation status without custom
   assert.equal(program.stats.pendingCount, 1);
   assert.equal(program.stats.bonusPointsEarned, 1);
   assert.equal(program.referredBy.status, "claimed");
+  assert.equal(program.canClaimCode, false);
+  assert.equal(program.claimIneligibleReason, "already_linked");
   assert.equal(program.invitations[0].referredUid, undefined);
   assert.match(program.invitations[0].id, /^invite-[a-f0-9]{12}$/);
   assert.notEqual(program.invitations[0].id, "friend-1");

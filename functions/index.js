@@ -118,6 +118,7 @@ const {
   REFERRAL_INVITE_LIMIT,
   assertReferralAttributionWindow,
   assertReferralClaimAllowed,
+  buildReferralClaimEligibility,
   buildMyReferralProgram,
   buildReferralBonusAdjustment,
   normalizeReferralCode,
@@ -1126,7 +1127,17 @@ exports.getMyLoyalty = onCall(async (request) => {
 
 exports.getMyReferral = onCall(async (request) => {
   const uid = assertAuthenticatedUid(request);
-  return loadMyReferralProgram(uid);
+  const [caller, program] = await Promise.all([
+    auth.getUser(uid),
+    loadMyReferralProgram(uid),
+  ]);
+  return {
+    ...program,
+    ...buildReferralClaimEligibility({
+      authUser: caller,
+      hasExistingAttribution: program.referredBy !== null,
+    }),
+  };
 });
 
 exports.claimMyReferralCode = onCall(async (request) => {

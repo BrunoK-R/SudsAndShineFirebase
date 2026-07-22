@@ -122,6 +122,8 @@ function buildMyReferralProgram({profile, referredBy = null, invitedDocs = []}) 
     shareMessage: `Use o meu código ${profile.code} na app Suds & Shine. Depois da primeira lavagem paga concluída, recebemos ambos 1 selo extra.`,
     rewardPoints: REFERRAL_BONUS_POINTS,
     attributionDays: REFERRAL_ATTRIBUTION_DAYS,
+    canClaimCode: !normalizedReferredBy,
+    claimIneligibleReason: normalizedReferredBy ? "already_linked" : "",
     referredBy: normalizedReferredBy ? {
       code: normalizedReferredBy.code,
       status: normalizedReferredBy.status,
@@ -151,6 +153,21 @@ function assertReferralAttributionWindow(authUser, now = new Date()) {
       "failed-precondition",
       `Referral codes must be added within ${REFERRAL_ATTRIBUTION_DAYS} days of account creation`,
     );
+  }
+}
+
+function buildReferralClaimEligibility({authUser, hasExistingAttribution = false, now = new Date()}) {
+  if (hasExistingAttribution) {
+    return {canClaimCode: false, claimIneligibleReason: "already_linked"};
+  }
+  try {
+    assertReferralAttributionWindow(authUser, now);
+    return {canClaimCode: true, claimIneligibleReason: ""};
+  } catch (error) {
+    if (error instanceof HttpsError && error.code === "failed-precondition") {
+      return {canClaimCode: false, claimIneligibleReason: "account_too_old"};
+    }
+    throw error;
   }
 }
 
@@ -194,6 +211,7 @@ module.exports = {
   REFERRAL_INVITE_LIMIT,
   assertReferralAttributionWindow,
   assertReferralClaimAllowed,
+  buildReferralClaimEligibility,
   buildMyReferralProgram,
   buildReferralBonusAdjustment,
   buildReferralCode,
