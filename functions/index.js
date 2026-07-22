@@ -1,4 +1,8 @@
-const admin = require("firebase-admin");
+const {initializeApp} = require("firebase-admin/app");
+const {getAuth} = require("firebase-admin/auth");
+const {FieldValue, Timestamp, getFirestore} = require("firebase-admin/firestore");
+const {getMessaging} = require("firebase-admin/messaging");
+const {getStorage} = require("firebase-admin/storage");
 const crypto = require("node:crypto");
 const {setGlobalOptions, logger} = require("firebase-functions/v2");
 const {onCall, onRequest, HttpsError} = require("firebase-functions/v2/https");
@@ -180,7 +184,7 @@ const {
 const {
   MAX_DELIVERY_ATTEMPTS,
   MAX_DELIVERY_TOKENS_PER_USER,
-  buildNotificationPushMessage,
+  buildNotificationPushMessages,
   deliveryCompletionUpdate,
   deliveryFailureUpdate,
   deliverySuppressionUpdate,
@@ -194,8 +198,11 @@ const {
   notificationTokenDeliveryFromSnap,
 } = require("./notificationDelivery");
 
-admin.initializeApp();
-const db = admin.firestore();
+initializeApp();
+const auth = getAuth();
+const db = getFirestore();
+const messaging = getMessaging();
+const storage = getStorage();
 const USER_HISTORY_RESERVATION_LIMIT = 50;
 const ADMIN_ALERT_RECIPIENT_LIMIT = 25;
 const CAMPAIGN_BROADCAST_BATCH_WRITE_LIMIT = 450;
@@ -358,7 +365,7 @@ function enqueueAdminPendingBookingAlerts(tx, {
       notificationSettingsSnap,
       adminPreferencesSnap: adminPreferenceSnaps[index] || null,
       actorUid,
-      timestamp: admin.firestore.FieldValue.serverTimestamp(),
+      timestamp: FieldValue.serverTimestamp(),
     });
     if (queued) queuedCount += 1;
   });
@@ -382,11 +389,11 @@ function releaseReservedLoyaltyReward(tx, reservationData) {
 
   tx.update(redemptionRef, {
     status: "issued",
-    reservationId: admin.firestore.FieldValue.delete(),
-    reservationCode: admin.firestore.FieldValue.delete(),
-    reservedAt: admin.firestore.FieldValue.delete(),
-    redeemedAt: admin.firestore.FieldValue.delete(),
-    updatedAt: admin.firestore.FieldValue.serverTimestamp(),
+    reservationId: FieldValue.delete(),
+    reservationCode: FieldValue.delete(),
+    reservedAt: FieldValue.delete(),
+    redeemedAt: FieldValue.delete(),
+    updatedAt: FieldValue.serverTimestamp(),
   });
 }
 
@@ -396,10 +403,10 @@ function redeemReservedLoyaltyReward(tx, reservationData, reservationId) {
 
   tx.update(redemptionRef, {
     status: "redeemed",
-    redeemedAt: admin.firestore.FieldValue.serverTimestamp(),
+    redeemedAt: FieldValue.serverTimestamp(),
     reservationId,
     reservationCode: String(reservationData.reservationCode || "").trim(),
-    updatedAt: admin.firestore.FieldValue.serverTimestamp(),
+    updatedAt: FieldValue.serverTimestamp(),
   });
 }
 
@@ -507,7 +514,7 @@ exports.createReservation = onCall(async (request) => {
 
   const reservationRef = db.collection("reservations").doc();
   const reservationCode = generateDeterministicReservationCode(reservationRef.id);
-  let pendingExpiresAt = admin.firestore.Timestamp.fromDate(pendingExpiresAtForPolicy(null));
+  let pendingExpiresAt = Timestamp.fromDate(pendingExpiresAtForPolicy(null));
 
   if (data.userVehicleId && !authenticatedUid) {
     throw new HttpsError("unauthenticated", "Authentication required for saved vehicle reservations");
@@ -600,7 +607,7 @@ exports.createReservation = onCall(async (request) => {
     );
     const businessInfo = businessInfoFromSnapshots(businessInfoSnap, keyedBusinessInfoSnap);
     const bookingPolicy = buildBookingPolicy(bookingPolicySnap);
-    pendingExpiresAt = admin.firestore.Timestamp.fromDate(pendingExpiresAtForPolicy(bookingPolicy));
+    pendingExpiresAt = Timestamp.fromDate(pendingExpiresAtForPolicy(bookingPolicy));
     const openingHours = openingHoursForAvailability(businessInfo, businessInfoSnap, keyedBusinessInfoSnap);
     const serviceCatalog = buildServiceCatalog(servicesSnap.docs, extrasSnap.docs);
     const service = serviceCatalog.services.find((item) => item.id === data.serviceId) || null;
@@ -690,8 +697,8 @@ exports.createReservation = onCall(async (request) => {
       pendingExpiresAt,
       notes: data.notes,
       internalNotes: "",
-      createdAt: admin.firestore.FieldValue.serverTimestamp(),
-      updatedAt: admin.firestore.FieldValue.serverTimestamp(),
+      createdAt: FieldValue.serverTimestamp(),
+      updatedAt: FieldValue.serverTimestamp(),
       source: "public-booking",
     };
 
@@ -700,10 +707,10 @@ exports.createReservation = onCall(async (request) => {
     if (loyaltyReward) {
       tx.update(loyaltyReward.ref, {
         status: "reserved",
-        reservedAt: admin.firestore.FieldValue.serverTimestamp(),
+        reservedAt: FieldValue.serverTimestamp(),
         reservationId: reservationRef.id,
         reservationCode,
-        updatedAt: admin.firestore.FieldValue.serverTimestamp(),
+        updatedAt: FieldValue.serverTimestamp(),
       });
     }
     if (authenticatedUid) {
@@ -716,7 +723,7 @@ exports.createReservation = onCall(async (request) => {
         userPreferencesSnap: notificationPreferencesSnap,
         userDocSnap: notificationUserSnap,
         actorUid: authenticatedUid,
-        timestamp: admin.firestore.FieldValue.serverTimestamp(),
+        timestamp: FieldValue.serverTimestamp(),
       });
     }
     enqueueAdminPendingBookingAlerts(tx, {
@@ -856,11 +863,11 @@ exports.joinMyWaitlist = onCall(async (request) => {
       notifiedAt: null,
       cancelledAt: null,
       availableTimes: [],
-      updatedAt: admin.firestore.FieldValue.serverTimestamp(),
+      updatedAt: FieldValue.serverTimestamp(),
       source: "customer-mobile-waitlist",
     };
     if (!existingSnap.exists) {
-      value.createdAt = admin.firestore.FieldValue.serverTimestamp();
+      value.createdAt = FieldValue.serverTimestamp();
     }
     tx.set(waitlistRef, value, {merge: true});
     return nextAlertVersion;
@@ -906,8 +913,8 @@ exports.cancelMyWaitlist = onCall(async (request) => {
     }
     tx.update(waitlistRef, {
       status: "cancelled",
-      cancelledAt: admin.firestore.FieldValue.serverTimestamp(),
-      updatedAt: admin.firestore.FieldValue.serverTimestamp(),
+      cancelledAt: FieldValue.serverTimestamp(),
+      updatedAt: FieldValue.serverTimestamp(),
     });
     return "cancelled";
   });
@@ -1071,8 +1078,8 @@ exports.redeemMyLoyaltyReward = onCall(async (request) => {
       status: "issued",
       ...buildLoyaltyRedemptionMetadata(loyaltySettings),
       source: "mobile-app",
-      createdAt: admin.firestore.FieldValue.serverTimestamp(),
-      updatedAt: admin.firestore.FieldValue.serverTimestamp(),
+      createdAt: FieldValue.serverTimestamp(),
+      updatedAt: FieldValue.serverTimestamp(),
     };
     const previewRedemptionDoc = {
       id: redemptionRef.id,
@@ -1094,7 +1101,7 @@ exports.redeemMyLoyaltyReward = onCall(async (request) => {
       userDocSnap: notificationUserSnap,
       existingOutboxSnap: notificationOutboxSnap,
       actorUid: uid,
-      timestamp: admin.firestore.FieldValue.serverTimestamp(),
+      timestamp: FieldValue.serverTimestamp(),
     });
 
     redemption = {
@@ -1137,8 +1144,8 @@ exports.submitReservationReview = onCall(async (request) => {
       email,
     });
     const createdAt = existingReviewSnap.exists ?
-      existingReviewSnap.get("createdAt") || admin.firestore.FieldValue.serverTimestamp() :
-      admin.firestore.FieldValue.serverTimestamp();
+      existingReviewSnap.get("createdAt") || FieldValue.serverTimestamp() :
+      FieldValue.serverTimestamp();
 
     tx.set(reviewRef, {
       ...buildReservationReviewDocument({
@@ -1148,7 +1155,7 @@ exports.submitReservationReview = onCall(async (request) => {
         email,
       }),
       createdAt,
-      updatedAt: admin.firestore.FieldValue.serverTimestamp(),
+      updatedAt: FieldValue.serverTimestamp(),
     }, {merge: true});
   });
 
@@ -1198,9 +1205,9 @@ exports.cancelMyReservation = onCall(async (request) => {
 
     tx.update(reservationRef, {
       status: "cancelled",
-      cancelledAt: admin.firestore.FieldValue.serverTimestamp(),
+      cancelledAt: FieldValue.serverTimestamp(),
       cancelledByUid: uid,
-      updatedAt: admin.firestore.FieldValue.serverTimestamp(),
+      updatedAt: FieldValue.serverTimestamp(),
     });
     releaseReservedLoyaltyReward(tx, reservationData);
     enqueueReservationNotification(tx, {
@@ -1215,7 +1222,7 @@ exports.cancelMyReservation = onCall(async (request) => {
       userPreferencesSnap: notificationPreferencesSnap,
       userDocSnap: notificationUserSnap,
       actorUid: uid,
-      timestamp: admin.firestore.FieldValue.serverTimestamp(),
+      timestamp: FieldValue.serverTimestamp(),
     });
     finalStatus = "cancelled";
   });
@@ -1331,14 +1338,14 @@ exports.rescheduleMyReservation = onCall(async (request) => {
       slotEnd: data.slotEnd.toISOString(),
       date: dateKey,
       status: "pending",
-      pendingExpiresAt: admin.firestore.Timestamp.fromDate(pendingExpiresAtForPolicy(bookingPolicy)),
+      pendingExpiresAt: Timestamp.fromDate(pendingExpiresAtForPolicy(bookingPolicy)),
       previousSlotStart: currentReservation.currentSlotStart.toISOString(),
       previousSlotEnd: currentReservation.currentSlotEnd.toISOString(),
       previousStatus: currentReservation.previousStatus,
-      rescheduledAt: admin.firestore.FieldValue.serverTimestamp(),
+      rescheduledAt: FieldValue.serverTimestamp(),
       rescheduledByUid: uid,
-      rescheduleCount: admin.firestore.FieldValue.increment(1),
-      updatedAt: admin.firestore.FieldValue.serverTimestamp(),
+      rescheduleCount: FieldValue.increment(1),
+      updatedAt: FieldValue.serverTimestamp(),
     });
     enqueueReservationNotification(tx, {
       db,
@@ -1350,7 +1357,7 @@ exports.rescheduleMyReservation = onCall(async (request) => {
         slotEnd: data.slotEnd.toISOString(),
         date: dateKey,
         status: "pending",
-        pendingExpiresAt: admin.firestore.Timestamp.fromDate(pendingExpiresAtForPolicy(bookingPolicy)),
+        pendingExpiresAt: Timestamp.fromDate(pendingExpiresAtForPolicy(bookingPolicy)),
         previousSlotStart: currentReservation.currentSlotStart.toISOString(),
         previousSlotEnd: currentReservation.currentSlotEnd.toISOString(),
         previousStatus: currentReservation.previousStatus,
@@ -1359,7 +1366,7 @@ exports.rescheduleMyReservation = onCall(async (request) => {
       userPreferencesSnap: notificationPreferencesSnap,
       userDocSnap: notificationUserSnap,
       actorUid: uid,
-      timestamp: admin.firestore.FieldValue.serverTimestamp(),
+      timestamp: FieldValue.serverTimestamp(),
     });
     finalStatus = "pending";
   });
@@ -1398,7 +1405,7 @@ exports.upsertMyBookingPreset = onCall(async (request) => {
   const data = validateUserBookingPresetInput(request.data);
   const presetId = data.presetId || bookingPresetId(data);
   const presetRef = userBookingPresetsCollection(uid).doc(presetId);
-  const now = admin.firestore.FieldValue.serverTimestamp();
+  const now = FieldValue.serverTimestamp();
 
   await db.runTransaction(async (tx) => {
     const [presetSnap, presetsSnap, vehicleSnap] = await Promise.all([
@@ -1466,7 +1473,7 @@ exports.updateMyProfile = onCall(async (request) => {
   const data = validateUserProfilePayload(request.data);
   const userRef = userDocument(uid);
   const userSnap = await userRef.get();
-  const now = admin.firestore.FieldValue.serverTimestamp();
+  const now = FieldValue.serverTimestamp();
   const email = String(request.auth?.token?.email || "").trim().toLowerCase();
 
   await userRef.set(
@@ -1492,7 +1499,7 @@ exports.updateMyProfile = onCall(async (request) => {
     {merge: true},
   );
 
-  admin.auth().updateUser(uid, {displayName: data.displayName}).catch((err) => {
+  auth.updateUser(uid, {displayName: data.displayName}).catch((err) => {
     logger.warn("Firebase Auth displayName update failed", {
       uid,
       message: err?.message,
@@ -1513,9 +1520,9 @@ exports.updateMyProfilePhoto = onCall(async (request) => {
   const userRef = userDocument(uid);
   const userSnap = await userRef.get();
   const previousStoragePath = String(userSnap.get("profilePhotoStoragePath") || "").trim();
-  const now = admin.firestore.FieldValue.serverTimestamp();
+  const now = FieldValue.serverTimestamp();
   const email = String(request.auth?.token?.email || "").trim().toLowerCase();
-  const bucket = admin.storage().bucket();
+  const bucket = storage.bucket();
   const auditFields = {
     uid,
     email,
@@ -1531,7 +1538,7 @@ exports.updateMyProfilePhoto = onCall(async (request) => {
         {
           ...auditFields,
           photoUrl: "",
-          profilePhotoStoragePath: admin.firestore.FieldValue.delete(),
+          profilePhotoStoragePath: FieldValue.delete(),
         },
         {merge: true},
       );
@@ -1619,7 +1626,7 @@ exports.updateMyNotificationPreferences = onCall(async (request) => {
   const requestedPreferences = validateUserNotificationPreferencesInput(request.data);
   const role = await adminRoles.effectiveRoleFromRequest(db, request);
   const canManageAdminPendingAlerts = role === "admin";
-  const now = admin.firestore.FieldValue.serverTimestamp();
+  const now = FieldValue.serverTimestamp();
   let savedPreferences = requestedPreferences;
 
   await db.runTransaction(async (tx) => {
@@ -1662,7 +1669,7 @@ exports.registerNotificationToken = onCall(async (request) => {
   const uid = assertAuthenticatedUid(request);
   const registration = validateNotificationTokenRegistrationInput(request.data);
   const tokenRef = userNotificationTokensCollection(uid).doc(registration.tokenId);
-  const now = admin.firestore.FieldValue.serverTimestamp();
+  const now = FieldValue.serverTimestamp();
 
   await db.runTransaction(async (tx) => {
     const tokenSnap = await tx.get(tokenRef);
@@ -1670,10 +1677,13 @@ exports.registerNotificationToken = onCall(async (request) => {
       tokenRef,
       {
         ...buildNotificationTokenValue(registration, uid),
+        ...(registration.registrationType === "fid" ?
+          {token: FieldValue.delete()} :
+          {fid: FieldValue.delete()}),
         createdAt: tokenSnap.exists ? tokenSnap.get("createdAt") || now : now,
         lastSeenAt: now,
         updatedAt: now,
-        revokedAt: admin.firestore.FieldValue.delete(),
+        revokedAt: FieldValue.delete(),
         updateSource: "mobile-notification-token",
       },
       {merge: true},
@@ -1692,13 +1702,14 @@ exports.registerNotificationToken = onCall(async (request) => {
 exports.deleteNotificationToken = onCall(async (request) => {
   const uid = assertAuthenticatedUid(request);
   const deletion = validateNotificationTokenDeleteInput(request.data);
-  const now = admin.firestore.FieldValue.serverTimestamp();
+  const now = FieldValue.serverTimestamp();
 
   await userNotificationTokensCollection(uid).doc(deletion.tokenId).set(
     {
       ownerUid: uid,
       tokenId: deletion.tokenId,
-      token: admin.firestore.FieldValue.delete(),
+      fid: FieldValue.delete(),
+      token: FieldValue.delete(),
       enabled: false,
       revokedAt: now,
       updatedAt: now,
@@ -1718,7 +1729,7 @@ exports.createVehicle = onCall(async (request) => {
   const uid = assertAuthenticatedUid(request);
   const data = validateVehiclePayload(request.data);
   const vehicleRef = userVehiclesCollection(uid).doc();
-  const now = admin.firestore.FieldValue.serverTimestamp();
+  const now = FieldValue.serverTimestamp();
   let savedVehicle = null;
 
   await db.runTransaction(async (tx) => {
@@ -1769,7 +1780,7 @@ exports.updateVehicle = onCall(async (request) => {
       throw new HttpsError("not-found", "Vehicle not found");
     }
 
-    const now = admin.firestore.FieldValue.serverTimestamp();
+    const now = FieldValue.serverTimestamp();
     savedVehicle = {
       ...data,
       isDefault: data.isDefault,
@@ -1825,7 +1836,7 @@ exports.deleteVehicle = onCall(async (request) => {
     if (replacementSnap) {
       tx.update(replacementSnap.ref, {
         isDefault: true,
-        updatedAt: admin.firestore.FieldValue.serverTimestamp(),
+        updatedAt: FieldValue.serverTimestamp(),
       });
     }
   });
@@ -2000,7 +2011,7 @@ exports.updateBusinessInfo = onCall(async (request) => {
     {
       key: "business_info",
       value,
-      updatedAt: admin.firestore.FieldValue.serverTimestamp(),
+      updatedAt: FieldValue.serverTimestamp(),
       updatedByUid: request.auth.uid,
       updateSource: "admin-mobile-business-info",
     },
@@ -2025,7 +2036,7 @@ exports.updateBookingPolicy = onCall(async (request) => {
     {
       key: "booking_policy",
       value,
-      updatedAt: admin.firestore.FieldValue.serverTimestamp(),
+      updatedAt: FieldValue.serverTimestamp(),
       updatedByUid: request.auth.uid,
       updateSource: "admin-mobile-booking-policy",
     },
@@ -2050,7 +2061,7 @@ exports.updateLoyaltySettings = onCall(async (request) => {
     {
       key: "loyalty_settings",
       value,
-      updatedAt: admin.firestore.FieldValue.serverTimestamp(),
+      updatedAt: FieldValue.serverTimestamp(),
       updatedByUid: request.auth.uid,
       updateSource: "admin-mobile-loyalty",
     },
@@ -2075,7 +2086,7 @@ exports.updateNotificationSettings = onCall(async (request) => {
     {
       key: "notification_settings",
       value,
-      updatedAt: admin.firestore.FieldValue.serverTimestamp(),
+      updatedAt: FieldValue.serverTimestamp(),
       updatedByUid: request.auth.uid,
       updateSource: "admin-mobile-notifications",
     },
@@ -2161,14 +2172,14 @@ exports.upsertAdminNotificationCampaignDraft = onCall(async (request) => {
     }
     const update = {
       ...value,
-      updatedAt: admin.firestore.FieldValue.serverTimestamp(),
+      updatedAt: FieldValue.serverTimestamp(),
       updatedByUid: request.auth.uid,
-      archivedAt: admin.firestore.FieldValue.delete(),
-      archivedByUid: admin.firestore.FieldValue.delete(),
+      archivedAt: FieldValue.delete(),
+      archivedByUid: FieldValue.delete(),
     };
 
     if (created) {
-      update.createdAt = admin.firestore.FieldValue.serverTimestamp();
+      update.createdAt = FieldValue.serverTimestamp();
       update.createdByUid = request.auth.uid;
       update.notificationCreatedByUid = request.auth.uid;
     }
@@ -2202,9 +2213,9 @@ exports.archiveAdminNotificationCampaignDraft = onCall(async (request) => {
 
     tx.update(campaignRef, {
       ...buildNotificationCampaignDraftArchiveValue(),
-      archivedAt: admin.firestore.FieldValue.serverTimestamp(),
+      archivedAt: FieldValue.serverTimestamp(),
       archivedByUid: request.auth.uid,
-      updatedAt: admin.firestore.FieldValue.serverTimestamp(),
+      updatedAt: FieldValue.serverTimestamp(),
       updatedByUid: request.auth.uid,
     });
   });
@@ -2283,7 +2294,7 @@ exports.updateAvailabilityConfiguration = onCall(async (request) => {
     openingHours: availability.openingHours,
   };
   const businessInfoValue = buildBusinessInfoSettingValue(updatedBusinessInfo);
-  const now = admin.firestore.FieldValue.serverTimestamp();
+  const now = FieldValue.serverTimestamp();
   const batch = db.batch();
 
   batch.set(
@@ -2346,7 +2357,7 @@ exports.upsertCapacityOverride = onCall(async (request) => {
   await db.collection("capacity_overrides").doc(override.date).set(
     {
       ...buildCapacityOverrideDocument(override, request.auth.uid),
-      updatedAt: admin.firestore.FieldValue.serverTimestamp(),
+      updatedAt: FieldValue.serverTimestamp(),
     },
     {merge: true},
   );
@@ -2367,10 +2378,10 @@ exports.clearCapacityOverride = onCall(async (request) => {
     {
       date: override.date,
       active: false,
-      maxBookingsPerSlot: admin.firestore.FieldValue.delete(),
-      clearedAt: admin.firestore.FieldValue.serverTimestamp(),
+      maxBookingsPerSlot: FieldValue.delete(),
+      clearedAt: FieldValue.serverTimestamp(),
       clearedByUid: request.auth.uid,
-      updatedAt: admin.firestore.FieldValue.serverTimestamp(),
+      updatedAt: FieldValue.serverTimestamp(),
       updatedByUid: request.auth.uid,
       updateSource: "admin-mobile-availability",
     },
@@ -2392,7 +2403,7 @@ exports.upsertBlockedSlot = onCall(async (request) => {
   await db.collection("blocked_slots").doc(blockedSlot.blockedSlotId).set(
     {
       ...buildBlockedSlotDocument(blockedSlot, request.auth.uid),
-      updatedAt: admin.firestore.FieldValue.serverTimestamp(),
+      updatedAt: FieldValue.serverTimestamp(),
     },
     {merge: true},
   );
@@ -2413,15 +2424,15 @@ exports.clearBlockedSlot = onCall(async (request) => {
     {
       blockedSlotId: blockedSlot.blockedSlotId,
       active: false,
-      slotStart: admin.firestore.FieldValue.delete(),
-      slotEnd: admin.firestore.FieldValue.delete(),
-      startTime: admin.firestore.FieldValue.delete(),
-      endTime: admin.firestore.FieldValue.delete(),
-      start_time: admin.firestore.FieldValue.delete(),
-      end_time: admin.firestore.FieldValue.delete(),
-      clearedAt: admin.firestore.FieldValue.serverTimestamp(),
+      slotStart: FieldValue.delete(),
+      slotEnd: FieldValue.delete(),
+      startTime: FieldValue.delete(),
+      endTime: FieldValue.delete(),
+      start_time: FieldValue.delete(),
+      end_time: FieldValue.delete(),
+      clearedAt: FieldValue.serverTimestamp(),
       clearedByUid: request.auth.uid,
-      updatedAt: admin.firestore.FieldValue.serverTimestamp(),
+      updatedAt: FieldValue.serverTimestamp(),
       updatedByUid: request.auth.uid,
       updateSource: "admin-mobile-availability",
     },
@@ -2448,17 +2459,17 @@ exports.upsertServiceCatalogItem = onCall(async (request) => {
     created = !serviceSnap.exists;
     const update = {
       ...data.document,
-      updatedAt: admin.firestore.FieldValue.serverTimestamp(),
+      updatedAt: FieldValue.serverTimestamp(),
       updatedByUid: request.auth.uid,
     };
 
     if (created) {
-      update.createdAt = admin.firestore.FieldValue.serverTimestamp();
+      update.createdAt = FieldValue.serverTimestamp();
       update.createdByUid = request.auth.uid;
     }
     if (data.document.active) {
-      update.archivedAt = admin.firestore.FieldValue.delete();
-      update.archivedByUid = admin.firestore.FieldValue.delete();
+      update.archivedAt = FieldValue.delete();
+      update.archivedByUid = FieldValue.delete();
     }
 
     tx.set(serviceRef, update, {merge: true});
@@ -2486,9 +2497,9 @@ exports.archiveServiceCatalogItem = onCall(async (request) => {
     tx.update(serviceRef, {
       active: false,
       enabled: false,
-      archivedAt: admin.firestore.FieldValue.serverTimestamp(),
+      archivedAt: FieldValue.serverTimestamp(),
       archivedByUid: request.auth.uid,
-      updatedAt: admin.firestore.FieldValue.serverTimestamp(),
+      updatedAt: FieldValue.serverTimestamp(),
       updatedByUid: request.auth.uid,
     });
   });
@@ -2513,17 +2524,17 @@ exports.upsertServiceExtra = onCall(async (request) => {
     created = !extraSnap.exists;
     const update = {
       ...data.document,
-      updatedAt: admin.firestore.FieldValue.serverTimestamp(),
+      updatedAt: FieldValue.serverTimestamp(),
       updatedByUid: request.auth.uid,
     };
 
     if (created) {
-      update.createdAt = admin.firestore.FieldValue.serverTimestamp();
+      update.createdAt = FieldValue.serverTimestamp();
       update.createdByUid = request.auth.uid;
     }
     if (data.document.active) {
-      update.archivedAt = admin.firestore.FieldValue.delete();
-      update.archivedByUid = admin.firestore.FieldValue.delete();
+      update.archivedAt = FieldValue.delete();
+      update.archivedByUid = FieldValue.delete();
     }
 
     tx.set(extraRef, update, {merge: true});
@@ -2551,9 +2562,9 @@ exports.archiveServiceExtra = onCall(async (request) => {
     tx.update(extraRef, {
       active: false,
       enabled: false,
-      archivedAt: admin.firestore.FieldValue.serverTimestamp(),
+      archivedAt: FieldValue.serverTimestamp(),
       archivedByUid: request.auth.uid,
-      updatedAt: admin.firestore.FieldValue.serverTimestamp(),
+      updatedAt: FieldValue.serverTimestamp(),
       updatedByUid: request.auth.uid,
     });
   });
@@ -2588,9 +2599,9 @@ exports.acceptReservation = onCall(async (request) => {
     reservationCode = String(reservationData.reservationCode || "").trim();
     tx.update(reservationRef, {
       status: "confirmed",
-      acceptedAt: admin.firestore.FieldValue.serverTimestamp(),
+      acceptedAt: FieldValue.serverTimestamp(),
       acceptedByUid: request.auth.uid,
-      updatedAt: admin.firestore.FieldValue.serverTimestamp(),
+      updatedAt: FieldValue.serverTimestamp(),
     });
     enqueueReservationNotification(tx, {
       db,
@@ -2604,7 +2615,7 @@ exports.acceptReservation = onCall(async (request) => {
       userPreferencesSnap: notificationPreferencesSnap,
       userDocSnap: notificationUserSnap,
       actorUid: request.auth.uid,
-      timestamp: admin.firestore.FieldValue.serverTimestamp(),
+      timestamp: FieldValue.serverTimestamp(),
     });
   });
 
@@ -2639,9 +2650,9 @@ exports.startReservation = onCall(async (request) => {
     reservationCode = String(reservationData.reservationCode || "").trim();
     tx.update(reservationRef, {
       status: "in_progress",
-      startedAt: admin.firestore.FieldValue.serverTimestamp(),
+      startedAt: FieldValue.serverTimestamp(),
       startedByUid: request.auth.uid,
-      updatedAt: admin.firestore.FieldValue.serverTimestamp(),
+      updatedAt: FieldValue.serverTimestamp(),
       updateSource: "admin-mobile-start",
     });
     enqueueReservationNotification(tx, {
@@ -2656,7 +2667,7 @@ exports.startReservation = onCall(async (request) => {
       userPreferencesSnap: notificationPreferencesSnap,
       userDocSnap: notificationUserSnap,
       actorUid: request.auth.uid,
-      timestamp: admin.firestore.FieldValue.serverTimestamp(),
+      timestamp: FieldValue.serverTimestamp(),
     });
   });
 
@@ -2689,14 +2700,14 @@ exports.rejectReservation = onCall(async (request) => {
     ]) : [null, null, null];
     const update = {
       status: "rejected",
-      rejectedAt: admin.firestore.FieldValue.serverTimestamp(),
+      rejectedAt: FieldValue.serverTimestamp(),
       rejectedByUid: request.auth.uid,
-      updatedAt: admin.firestore.FieldValue.serverTimestamp(),
+      updatedAt: FieldValue.serverTimestamp(),
     };
     if (data.rejectionReason) {
       update.rejectionReason = data.rejectionReason;
     } else {
-      update.rejectionReason = admin.firestore.FieldValue.delete();
+      update.rejectionReason = FieldValue.delete();
     }
 
     reservationCode = String(reservationData.reservationCode || "").trim();
@@ -2715,7 +2726,7 @@ exports.rejectReservation = onCall(async (request) => {
       userPreferencesSnap: notificationPreferencesSnap,
       userDocSnap: notificationUserSnap,
       actorUid: request.auth.uid,
-      timestamp: admin.firestore.FieldValue.serverTimestamp(),
+      timestamp: FieldValue.serverTimestamp(),
     });
   });
 
@@ -2763,12 +2774,12 @@ exports.completeReservation = onCall(async (request) => {
     tx.update(reservationRef, {
       status: "completed",
       paymentStatus,
-      paymentConfirmedAt: admin.firestore.FieldValue.serverTimestamp(),
+      paymentConfirmedAt: FieldValue.serverTimestamp(),
       paymentConfirmedByUid: request.auth.uid,
       loyaltyStampGranted,
-      completedAt: admin.firestore.FieldValue.serverTimestamp(),
+      completedAt: FieldValue.serverTimestamp(),
       completedByUid: request.auth.uid,
-      updatedAt: admin.firestore.FieldValue.serverTimestamp(),
+      updatedAt: FieldValue.serverTimestamp(),
       updateSource: "admin-mobile-completion",
     });
     redeemReservedLoyaltyReward(tx, reservationData, data.reservationId);
@@ -2786,7 +2797,7 @@ exports.completeReservation = onCall(async (request) => {
       userPreferencesSnap: notificationPreferencesSnap,
       userDocSnap: notificationUserSnap,
       actorUid: request.auth.uid,
-      timestamp: admin.firestore.FieldValue.serverTimestamp(),
+      timestamp: FieldValue.serverTimestamp(),
     });
 
     if (customerUid && !reviewSnap.exists && !existingOutboxSnap.exists) {
@@ -2803,7 +2814,7 @@ exports.completeReservation = onCall(async (request) => {
         userDocSnap: notificationUserSnap,
         existingOutboxSnap,
         actorUid: request.auth.uid,
-        timestamp: admin.firestore.FieldValue.serverTimestamp(),
+        timestamp: FieldValue.serverTimestamp(),
       });
     }
   });
@@ -2829,15 +2840,15 @@ exports.assignAdminRole = onCall(async (request) => {
     throw new HttpsError("invalid-argument", "role must be admin or employee");
   }
 
-  const user = await admin.auth().getUserByEmail(email);
-  await admin.auth().setCustomUserClaims(user.uid, {role});
+  const user = await auth.getUserByEmail(email);
+  await auth.setCustomUserClaims(user.uid, {role});
 
   await db.collection("admin_allowlist").doc(email).set(
     {
       uid: user.uid,
       email,
       role,
-      updatedAt: admin.firestore.FieldValue.serverTimestamp(),
+      updatedAt: FieldValue.serverTimestamp(),
       updatedByUid: request.auth.uid,
     },
     {merge: true},
@@ -2855,17 +2866,17 @@ exports.syncMyRole = onCall(async (request) => {
   const role = await getAllowlistedRole(email);
 
   if (!role) {
-    await admin.auth().setCustomUserClaims(request.auth.uid, {});
+    await auth.setCustomUserClaims(request.auth.uid, {});
     throw new HttpsError("permission-denied", "User is not allowlisted for admin access");
   }
 
-  await admin.auth().setCustomUserClaims(request.auth.uid, {role});
+  await auth.setCustomUserClaims(request.auth.uid, {role});
   await db.collection("admin_allowlist").doc(email).set(
     {
       uid: request.auth.uid,
       email,
       role,
-      lastSyncedAt: admin.firestore.FieldValue.serverTimestamp(),
+      lastSyncedAt: FieldValue.serverTimestamp(),
     },
     {merge: true},
   );
@@ -2900,8 +2911,8 @@ exports.expirePendingReservations = onSchedule("every 60 minutes", async () => {
       ]) : [null, null, null];
       tx.update(docSnap.ref, {
         status: "expired",
-        expiredAt: admin.firestore.FieldValue.serverTimestamp(),
-        updatedAt: admin.firestore.FieldValue.serverTimestamp(),
+        expiredAt: FieldValue.serverTimestamp(),
+        updatedAt: FieldValue.serverTimestamp(),
       });
       releaseReservedLoyaltyReward(tx, reservationData);
       enqueueReservationNotification(tx, {
@@ -2916,7 +2927,7 @@ exports.expirePendingReservations = onSchedule("every 60 minutes", async () => {
         userPreferencesSnap: notificationPreferencesSnap,
         userDocSnap: notificationUserSnap,
         actorUid: "system",
-        timestamp: admin.firestore.FieldValue.serverTimestamp(),
+        timestamp: FieldValue.serverTimestamp(),
       });
       expiredCount += 1;
     });
@@ -2974,7 +2985,7 @@ exports.queueReviewPromptNotifications = onSchedule("every 60 minutes", async ()
         userDocSnap: notificationUserSnap,
         existingOutboxSnap,
         actorUid: "system",
-        timestamp: admin.firestore.FieldValue.serverTimestamp(),
+        timestamp: FieldValue.serverTimestamp(),
       }));
     });
 
@@ -3031,7 +3042,7 @@ exports.queueBookingReminderNotifications = onSchedule("every 15 minutes", async
         userDocSnap: notificationUserSnap,
         existingOutboxSnap,
         actorUid: "system",
-        timestamp: admin.firestore.FieldValue.serverTimestamp(),
+        timestamp: FieldValue.serverTimestamp(),
       }));
     });
 
@@ -3151,15 +3162,15 @@ exports.queueWaitlistAvailabilityNotifications = onSchedule("every 15 minutes", 
         settings,
         preferences,
         actorUid: "system",
-        timestamp: admin.firestore.FieldValue.serverTimestamp(),
+        timestamp: FieldValue.serverTimestamp(),
       });
       if (!notification) return false;
 
       tx.set(outboxRef, notification);
       tx.update(waitlistRef, {
         status: "notified",
-        notifiedAt: admin.firestore.FieldValue.serverTimestamp(),
-        updatedAt: admin.firestore.FieldValue.serverTimestamp(),
+        notifiedAt: FieldValue.serverTimestamp(),
+        updatedAt: FieldValue.serverTimestamp(),
         availableTimes: entry.availableTimes,
       });
       return true;
@@ -3183,7 +3194,7 @@ async function claimNotificationOutboxDelivery(docSnap, now = new Date(), notifi
     const outbox = freshSnap.data() || {};
     if (!isNotificationOutboxDeliverable(outbox)) return null;
     if (!isNotificationSendingLeaseExpired(outbox, now)) return null;
-    const serverNow = admin.firestore.FieldValue.serverTimestamp();
+    const serverNow = FieldValue.serverTimestamp();
     const safetySuppression = notificationDeliverySafetySuppression(outbox);
     if (safetySuppression) {
       tx.update(freshSnap.ref, {
@@ -3229,7 +3240,7 @@ async function claimNotificationOutboxDelivery(docSnap, now = new Date(), notifi
     if (quietHoursDeferral) {
       tx.update(freshSnap.ref, {
         ...quietHoursDeferral,
-        quietHoursDeferredUntil: admin.firestore.Timestamp.fromDate(
+        quietHoursDeferredUntil: Timestamp.fromDate(
           quietHoursDeferral.quietHoursDeferredUntil,
         ),
         updatedAt: serverNow,
@@ -3247,12 +3258,12 @@ async function claimNotificationOutboxDelivery(docSnap, now = new Date(), notifi
       deliveryState: "sending",
       attemptCount,
       lastAttemptAt: serverNow,
-      deliveryLeaseExpiresAt: admin.firestore.Timestamp.fromDate(nextDeliveryLeaseExpiration(now)),
-      deliveryDeferralReason: admin.firestore.FieldValue.delete(),
-      quietHoursDeferredUntil: admin.firestore.FieldValue.delete(),
-      quietHoursStart: admin.firestore.FieldValue.delete(),
-      quietHoursEnd: admin.firestore.FieldValue.delete(),
-      quietHoursTimeZone: admin.firestore.FieldValue.delete(),
+      deliveryLeaseExpiresAt: Timestamp.fromDate(nextDeliveryLeaseExpiration(now)),
+      deliveryDeferralReason: FieldValue.delete(),
+      quietHoursDeferredUntil: FieldValue.delete(),
+      quietHoursStart: FieldValue.delete(),
+      quietHoursEnd: FieldValue.delete(),
+      quietHoursTimeZone: FieldValue.delete(),
       updatedAt: serverNow,
     });
 
@@ -3285,14 +3296,15 @@ async function hasActiveNotificationTokenForUser(uid) {
 async function revokeInvalidNotificationTokens(uid, invalidTokenIds) {
   if (!invalidTokenIds.length) return;
 
-  const now = admin.firestore.FieldValue.serverTimestamp();
+  const now = FieldValue.serverTimestamp();
   const batch = db.batch();
   for (const tokenId of invalidTokenIds) {
     batch.set(
       userNotificationTokensCollection(uid).doc(tokenId),
       {
         enabled: false,
-        token: admin.firestore.FieldValue.delete(),
+        fid: FieldValue.delete(),
+        token: FieldValue.delete(),
         revokedAt: now,
         updatedAt: now,
         updateSource: "push-delivery-invalid-token",
@@ -3317,7 +3329,7 @@ async function processNotificationOutboxDocument(docSnap, {
     return {state: "suppressed", reason: claimed.reason || "delivery-suppressed"};
   }
 
-  const serverNow = admin.firestore.FieldValue.serverTimestamp();
+  const serverNow = FieldValue.serverTimestamp();
   const recipientUid = String(claimed.outbox.recipientUid || "").trim();
   const [preferencesSnap, userSnap] = await Promise.all([
     userNotificationPreferencesRef(recipientUid).get(),
@@ -3361,8 +3373,8 @@ async function processNotificationOutboxDocument(docSnap, {
   }
 
   try {
-    const response = await admin.messaging().sendEachForMulticast(
-      buildNotificationPushMessage(claimed.outbox, tokenDeliveries),
+    const response = await messaging.sendEach(
+      buildNotificationPushMessages(claimed.outbox, tokenDeliveries),
     );
     const {outboxUpdate, invalidTokenIds} = deliveryCompletionUpdate({
       response,

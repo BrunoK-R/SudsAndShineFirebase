@@ -118,11 +118,33 @@ test("validateNotificationTokenRegistrationInput sanitizes dev token metadata", 
   assert.deepEqual(buildNotificationTokenValue(registration, "uid-1"), {
     ownerUid: "uid-1",
     tokenId: "current-test-device",
+    registrationType: "token",
     token: "fcm_token_1234567890",
     platform: "android",
     enabled: true,
     deviceLabel: "Pixel 8",
     appVersion: "1.0.0-debug",
+  });
+});
+
+test("validateNotificationTokenRegistrationInput accepts Firebase Installation IDs", () => {
+  const registration = validateNotificationTokenRegistrationInput({
+    fid: " c9WgP2qLrU5mN8xYzA1bCd ",
+    platform: "android",
+    tokenId: "current-test-device",
+    deviceLabel: "Pixel 9",
+    appVersion: "1.0.0",
+  });
+
+  assert.deepEqual(buildNotificationTokenValue(registration, "uid-1"), {
+    ownerUid: "uid-1",
+    tokenId: "current-test-device",
+    registrationType: "fid",
+    fid: "c9WgP2qLrU5mN8xYzA1bCd",
+    platform: "android",
+    enabled: true,
+    deviceLabel: "Pixel 9",
+    appVersion: "1.0.0",
   });
 });
 
@@ -133,6 +155,14 @@ test("validateNotificationTokenRegistrationInput rejects unsafe targets", () => 
       platform: "android",
     }),
     /token is invalid/,
+  );
+  assert.throws(
+    () => validateNotificationTokenRegistrationInput({
+      token: "fcm_token_1234567890",
+      fid: "c9WgP2qLrU5mN8xYzA1bCd",
+      platform: "android",
+    }),
+    /exactly one/,
   );
   assert.throws(
     () => validateNotificationTokenRegistrationInput({

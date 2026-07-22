@@ -5,7 +5,7 @@ const {
   ANDROID_NOTIFICATION_CLICK_ACTION,
   MAX_DELIVERY_ATTEMPTS,
   NOTIFICATION_QUIET_HOURS_TIME_ZONE,
-  buildNotificationPushMessage,
+  buildNotificationPushMessages,
   deliveryCompletionUpdate,
   deliveryFailureUpdate,
   deliverySuppressionUpdate,
@@ -21,7 +21,7 @@ const {
   shouldDeferNotificationForQuietHours,
 } = require("../notificationDelivery");
 
-test("notificationTokenDeliveryFromSnap returns only active owner-scoped tokens", () => {
+test("notificationTokenDeliveryFromSnap returns active owner-scoped registrations", () => {
   assert.deepEqual(notificationTokenDeliveryFromSnap(tokenDoc("current-device", {
     ownerUid: "user-1",
     tokenId: "ignored-data-id",
@@ -30,7 +30,20 @@ test("notificationTokenDeliveryFromSnap returns only active owner-scoped tokens"
     enabled: true,
   }), "user-1"), {
     tokenId: "current-device",
+    registrationType: "token",
     token: "fcm_token_1234567890",
+    platform: "android",
+  });
+
+  assert.deepEqual(notificationTokenDeliveryFromSnap(tokenDoc("fid-device", {
+    ownerUid: "user-1",
+    fid: "c9WgP2qLrU5mN8xYzA1bCd",
+    platform: "android",
+    enabled: true,
+  }), "user-1"), {
+    tokenId: "fid-device",
+    registrationType: "fid",
+    fid: "c9WgP2qLrU5mN8xYzA1bCd",
     platform: "android",
   });
 
@@ -56,12 +69,15 @@ test("notificationTokenDeliveryFromSnap returns only active owner-scoped tokens"
   }), "user-1"), null);
 });
 
-test("buildNotificationPushMessage builds token-scoped booking payload", () => {
-  const message = buildNotificationPushMessage(outbox(), [
+test("buildNotificationPushMessages builds token and FID booking payloads", () => {
+  const messages = buildNotificationPushMessages(outbox(), [
     {tokenId: "device-1", token: "fcm_token_1234567890", platform: "android"},
+    {tokenId: "device-2", fid: "c9WgP2qLrU5mN8xYzA1bCd", platform: "android"},
   ]);
+  const message = messages[0];
 
-  assert.deepEqual(message.tokens, ["fcm_token_1234567890"]);
+  assert.equal(message.token, "fcm_token_1234567890");
+  assert.equal(messages[1].fid, "c9WgP2qLrU5mN8xYzA1bCd");
   assert.deepEqual(message.notification, {
     title: "Marcação confirmada",
     body: "A sua marcação foi confirmada.",
@@ -82,8 +98,8 @@ test("buildNotificationPushMessage builds token-scoped booking payload", () => {
   assert.equal(message.apns.payload.aps.sound, "default");
 });
 
-test("buildNotificationPushMessage carries self-test campaign audit fields", () => {
-  const message = buildNotificationPushMessage(outbox({
+test("buildNotificationPushMessages carries self-test campaign audit fields", () => {
+  const [message] = buildNotificationPushMessages(outbox({
     type: "admin_test_notification",
     templateKey: "campaign_draft",
     campaignId: "summer-test",
@@ -106,6 +122,7 @@ test("deliveryCompletionUpdate marks sent attempts and returns invalid token ids
     tokenDeliveries: [
       {tokenId: "device-1", token: "fcm_token_success", platform: "android"},
       {tokenId: "device-2", token: "fcm_token_invalid", platform: "ios"},
+      {tokenId: "device-3", fid: "c9WgP2qLrU5mN8xYzA1bCd", platform: "android"},
     ],
     response: {
       responses: [
@@ -117,6 +134,13 @@ test("deliveryCompletionUpdate marks sent attempts and returns invalid token ids
             message: "Token no longer exists",
           },
         },
+        {
+          success: false,
+          error: {
+            code: "messaging/installation-id-not-registered",
+            message: "Installation no longer exists",
+          },
+        },
       ],
     },
     attemptCount: 1,
@@ -125,9 +149,9 @@ test("deliveryCompletionUpdate marks sent attempts and returns invalid token ids
 
   assert.equal(result.outboxUpdate.deliveryState, "sent");
   assert.equal(result.outboxUpdate.deliveryResult.successCount, 1);
-  assert.equal(result.outboxUpdate.deliveryResult.failureCount, 1);
-  assert.equal(result.outboxUpdate.deliveryResult.invalidTokenCount, 1);
-  assert.deepEqual(result.invalidTokenIds, ["device-2"]);
+  assert.equal(result.outboxUpdate.deliveryResult.failureCount, 2);
+  assert.equal(result.outboxUpdate.deliveryResult.invalidTokenCount, 2);
+  assert.deepEqual(result.invalidTokenIds, ["device-2", "device-3"]);
   assert.equal(result.outboxUpdate.failedAt, undefined);
 });
 
@@ -366,7 +390,7 @@ test("campaign broadcast delivery requires marketing opt-in when targeted", () =
 });
 
 test("campaign broadcast push payload carries campaign data", () => {
-  const message = buildNotificationPushMessage(
+  const [message] = buildNotificationPushMessages(
     outbox({
       type: "campaign_broadcast",
       templateKey: "campaign_draft",

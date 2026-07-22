@@ -27,6 +27,7 @@ const ANDROID_NOTIFICATION_CLICK_ACTION = "org.sudsmobile.app.NOTIFICATION_OPEN"
 const TERMINAL_TOKEN_ERROR_CODES = new Set([
   "messaging/invalid-registration-token",
   "messaging/registration-token-not-registered",
+  "messaging/installation-id-not-registered",
 ]);
 
 const RETRYABLE_MESSAGING_ERROR_CODES = new Set([
@@ -337,14 +338,17 @@ function notificationDeliveryPreferenceSuppression(outbox = {}, settings = {}, p
 function notificationTokenDeliveryFromSnap(tokenSnap, recipientUid) {
   if (!tokenSnap?.exists) return null;
   const data = tokenSnap.data() || {};
+  const fid = cleanDeliveryText(data.fid, 4096);
   const token = cleanDeliveryText(data.token, 4096);
-  if (!token || /\s/.test(token)) return null;
+  const registrationTarget = fid || token;
+  if (!registrationTarget || /\s/.test(registrationTarget)) return null;
   if (data.enabled === false || data.revokedAt) return null;
   if (cleanDeliveryText(data.ownerUid, 128) !== cleanDeliveryText(recipientUid, 128)) return null;
 
   return {
     tokenId: cleanDeliveryText(tokenSnap.id, 128),
-    token,
+    registrationType: fid ? "fid" : "token",
+    ...(fid ? {fid} : {token}),
     platform: cleanDeliveryText(data.platform, 24),
   };
 }
@@ -353,14 +357,8 @@ function pushDataValue(value, maxLength = 240) {
   return cleanDeliveryText(value, maxLength);
 }
 
-function buildNotificationPushMessage(outbox, tokenDeliveries) {
-  const tokens = (tokenDeliveries || [])
-    .map((delivery) => delivery.token)
-    .filter(Boolean)
-    .slice(0, MAX_DELIVERY_TOKENS_PER_USER);
-
-  return {
-    tokens,
+function buildNotificationPushMessages(outbox, tokenDeliveries) {
+  const baseMessage = {
     notification: {
       title: cleanDeliveryText(outbox.title, 120),
       body: cleanDeliveryText(outbox.body, 500),
@@ -392,6 +390,14 @@ function buildNotificationPushMessage(outbox, tokenDeliveries) {
       },
     },
   };
+
+  return (tokenDeliveries || [])
+    .filter((delivery) => delivery?.fid || delivery?.token)
+    .slice(0, MAX_DELIVERY_TOKENS_PER_USER)
+    .map((delivery) => ({
+      ...baseMessage,
+      ...(delivery.fid ? {fid: delivery.fid} : {token: delivery.token}),
+    }));
 }
 
 function messagingCode(error) {
@@ -532,7 +538,7 @@ module.exports = {
   MAX_DELIVERY_ATTEMPTS,
   MAX_DELIVERY_TOKENS_PER_USER,
   NOTIFICATION_QUIET_HOURS_TIME_ZONE,
-  buildNotificationPushMessage,
+  buildNotificationPushMessages,
   deliveryCompletionUpdate,
   deliveryFailureUpdate,
   deliverySuppressionUpdate,

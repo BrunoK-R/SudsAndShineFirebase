@@ -10,7 +10,7 @@ const DEFAULT_USER_NOTIFICATION_PREFERENCES = {
 };
 
 const SUPPORTED_TOKEN_PLATFORMS = ["android", "ios", "web"];
-const MAX_TOKEN_LENGTH = 4096;
+const MAX_REGISTRATION_TARGET_LENGTH = 4096;
 const MAX_DEVICE_LABEL_LENGTH = 120;
 const MAX_APP_VERSION_LENGTH = 64;
 const TOKEN_ID_PATTERN = /^[A-Za-z0-9_-]{8,128}$/;
@@ -108,8 +108,8 @@ function cleanOptionalText(value, maxLength) {
   return value.trim().replace(/\s+/g, " ").slice(0, maxLength);
 }
 
-function tokenIdForToken(token) {
-  return crypto.createHash("sha256").update(token).digest("hex");
+function tokenIdForRegistrationTarget(target) {
+  return crypto.createHash("sha256").update(target).digest("hex");
 }
 
 function validateOptionalTokenId(value) {
@@ -129,15 +129,15 @@ function normalizePlatform(value) {
   return platform;
 }
 
-function normalizeToken(value) {
+function normalizeRegistrationTarget(value, fieldName) {
   if (typeof value !== "string") {
-    throw new HttpsError("invalid-argument", "token is required");
+    throw new HttpsError("invalid-argument", `${fieldName} is required`);
   }
-  const token = value.trim();
-  if (token.length < 10 || token.length > MAX_TOKEN_LENGTH || /\s/.test(token)) {
-    throw new HttpsError("invalid-argument", "token is invalid");
+  const target = value.trim();
+  if (target.length < 10 || target.length > MAX_REGISTRATION_TARGET_LENGTH || /\s/.test(target)) {
+    throw new HttpsError("invalid-argument", `${fieldName} is invalid`);
   }
-  return token;
+  return target;
 }
 
 function validateNotificationTokenRegistrationInput(data = {}) {
@@ -145,11 +145,23 @@ function validateNotificationTokenRegistrationInput(data = {}) {
     throw new HttpsError("invalid-argument", "Notification token payload is required");
   }
 
-  const token = normalizeToken(data.token);
-  const tokenId = validateOptionalTokenId(data.tokenId || data.deviceId) || tokenIdForToken(token);
+  const hasFid = typeof data.fid === "string" && data.fid.trim().length > 0;
+  const hasToken = typeof data.token === "string" && data.token.trim().length > 0;
+  if (hasFid === hasToken) {
+    throw new HttpsError("invalid-argument", "Provide exactly one of fid or token");
+  }
+
+  const registrationType = hasFid ? "fid" : "token";
+  const registrationTarget = normalizeRegistrationTarget(
+    hasFid ? data.fid : data.token,
+    registrationType,
+  );
+  const tokenId = validateOptionalTokenId(data.tokenId || data.deviceId) ||
+    tokenIdForRegistrationTarget(registrationTarget);
   return {
     tokenId,
-    token,
+    registrationType,
+    ...(registrationType === "fid" ? {fid: registrationTarget} : {token: registrationTarget}),
     platform: normalizePlatform(data.platform),
     deviceLabel: cleanOptionalText(data.deviceLabel, MAX_DEVICE_LABEL_LENGTH),
     appVersion: cleanOptionalText(data.appVersion, MAX_APP_VERSION_LENGTH),
@@ -175,7 +187,8 @@ function buildNotificationTokenValue(registration, ownerUid) {
   return {
     ownerUid,
     tokenId: registration.tokenId,
-    token: registration.token,
+    registrationType: registration.registrationType,
+    ...(registration.registrationType === "fid" ? {fid: registration.fid} : {token: registration.token}),
     platform: registration.platform,
     enabled: true,
     deviceLabel: registration.deviceLabel,
