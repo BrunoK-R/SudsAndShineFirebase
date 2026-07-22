@@ -359,11 +359,13 @@ test("buildAvailabilityMonth applies capacity, conflicts, blocked slots, and pas
   assert.equal(availability.monthTitle, "maio 2026");
   assert.equal(availability.leadingEmptyCells, 4);
   assert.equal(may19.available, false);
+  assert.equal(may19.waitlistEligible, false);
   assert.equal(may20.slots.find((slot) => slot.time === "09:00").available, false);
   assert.equal(may20.slots.find((slot) => slot.time === "09:30").available, false);
   assert.equal(may20.slots.find((slot) => slot.time === "10:00").available, true);
   assert.equal(may20.slots.find((slot) => slot.time === "10:30").available, false);
   assert.equal(may20.available, true);
+  assert.equal(may20.waitlistEligible, true);
 });
 
 test("buildAvailabilityMonth uses configured business opening hours", () => {
@@ -396,6 +398,7 @@ test("buildAvailabilityMonth uses configured business opening hours", () => {
   assert.equal(may20.available, true);
   assert.deepEqual(may23.slots, []);
   assert.equal(may23.available, false);
+  assert.equal(may23.waitlistEligible, false);
 });
 
 test("resolveCapacityLimit ignores cleared capacity overrides", () => {

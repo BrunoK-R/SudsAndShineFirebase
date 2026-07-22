@@ -9,6 +9,7 @@ const TEMPLATE_KEYS = [
   "booking_expired",
   "booking_cancelled",
   "booking_rescheduled",
+  "waitlist_available",
   "booking_reminder",
   "review_prompt",
   "loyalty_reward",
@@ -19,6 +20,7 @@ const BACKWARD_COMPATIBLE_TEMPLATE_KEYS = new Set([
   "booking_completed",
   "booking_cancelled",
   "booking_rescheduled",
+  "waitlist_available",
   "loyalty_reward",
   "admin_pending_booking",
 ]);
@@ -79,6 +81,13 @@ const DEFAULT_NOTIFICATION_TEMPLATES = [
     enabled: true,
     title: "Marcação remarcada",
     body: "A sua marcação foi remarcada para {{slotStart}}. Consulte os detalhes na app.",
+  },
+  {
+    key: "waitlist_available",
+    label: "Vaga da lista de espera",
+    enabled: true,
+    title: "Surgiu uma vaga",
+    body: "Há novos horários para {{serviceName}} em {{waitlistDate}}. Reserve enquanto estão disponíveis.",
   },
   {
     key: "booking_reminder",

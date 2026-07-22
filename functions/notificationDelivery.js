@@ -13,6 +13,7 @@ const BOOKING_STATUS_DELIVERY_TEMPLATE_KEYS = new Set([
   "booking_expired",
   "booking_cancelled",
   "booking_rescheduled",
+  "waitlist_available",
   "review_prompt",
 ]);
 const ADMIN_PENDING_BOOKING_TEMPLATE_KEY = "admin_pending_booking";

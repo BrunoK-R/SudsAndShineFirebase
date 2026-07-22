@@ -8,6 +8,7 @@ const {buildUserNotificationPreferences} = require("./notificationPreferences");
 const NOTIFICATION_OUTBOX_COLLECTION = "notification_outbox";
 const ADMIN_PENDING_BOOKING_TEMPLATE_KEY = "admin_pending_booking";
 const LOYALTY_REWARD_TEMPLATE_KEY = "loyalty_reward";
+const WAITLIST_AVAILABLE_TEMPLATE_KEY = "waitlist_available";
 const BOOKING_STATUS_TEMPLATE_KEYS = new Set([
   "booking_request",
   "booking_accepted",
@@ -17,6 +18,7 @@ const BOOKING_STATUS_TEMPLATE_KEYS = new Set([
   "booking_expired",
   "booking_cancelled",
   "booking_rescheduled",
+  WAITLIST_AVAILABLE_TEMPLATE_KEY,
 ]);
 const REVIEW_PROMPT_RESERVATION_STATUS_VALUES = [
   "completed",
@@ -136,6 +138,19 @@ function loyaltyRewardVariables(redemptionId, redemption) {
   };
 }
 
+function waitlistVariables(waitlistId, waitlist) {
+  return {
+    waitlistId,
+    serviceName: cleanReservationText(waitlist?.serviceName || "serviço", 160),
+    waitlistDate: cleanReservationText(waitlist?.date, 10),
+    availableTimes: (waitlist?.availableTimes || [])
+      .map((time) => cleanReservationText(time, 5))
+      .filter(Boolean)
+      .slice(0, 3)
+      .join(", "),
+  };
+}
+
 function isReviewPromptReservationDue(reservation, now = new Date()) {
   const customerUid = cleanReservationText(reservation?.customerUid, 128);
   if (!customerUid) return false;
@@ -172,6 +187,7 @@ function notificationTypeForTemplateKey(templateKey) {
   if (templateKey === "review_prompt") return "review_prompt";
   if (templateKey === "booking_reminder") return "booking_reminder";
   if (templateKey === LOYALTY_REWARD_TEMPLATE_KEY) return "loyalty_reward";
+  if (templateKey === WAITLIST_AVAILABLE_TEMPLATE_KEY) return "waitlist_available";
   return "booking_status";
 }
 
@@ -349,6 +365,59 @@ function buildLoyaltyRewardNotificationOutboxDocument({
     preferencesSnapshot: {
       loyaltyEnabled: preferences.loyaltyEnabled !== false,
       marketingEnabled: preferences.marketingEnabled === true,
+    },
+  };
+}
+
+function buildWaitlistAvailabilityNotificationOutboxDocument({
+  waitlistId,
+  waitlist,
+  settings,
+  preferences,
+  actorUid = "",
+  timestamp = null,
+} = {}) {
+  const recipientUid = cleanReservationText(waitlist?.ownerUid, 128);
+  const normalizedWaitlistId = cleanReservationText(waitlistId, 160);
+  if (!recipientUid || !normalizedWaitlistId) return null;
+  if (!isTemplateGloballyEnabled(settings, WAITLIST_AVAILABLE_TEMPLATE_KEY)) return null;
+  if (!isUserPreferenceEnabled(preferences, WAITLIST_AVAILABLE_TEMPLATE_KEY)) return null;
+
+  const template = templateForKey(settings, WAITLIST_AVAILABLE_TEMPLATE_KEY);
+  if (!template || template.enabled === false) return null;
+
+  const variables = waitlistVariables(normalizedWaitlistId, waitlist || {});
+  const title = interpolateTemplateText(template.title, variables);
+  const body = interpolateTemplateText(template.body, variables);
+  if (!title || !body) return null;
+
+  const now = timestamp || new Date();
+  const alertVersion = Math.max(1, Math.floor(Number(waitlist?.alertVersion) || 1));
+  return {
+    type: "waitlist_available",
+    templateKey: WAITLIST_AVAILABLE_TEMPLATE_KEY,
+    recipientUid,
+    reservationId: normalizedWaitlistId,
+    serviceName: variables.serviceName,
+    waitlistDate: variables.waitlistDate,
+    availableTimes: variables.availableTimes,
+    title,
+    body,
+    channels: ["push"],
+    deliveryState: "queued",
+    attemptCount: 0,
+    dedupeKey: `${WAITLIST_AVAILABLE_TEMPLATE_KEY}:${normalizedWaitlistId}:${alertVersion}`,
+    createdAt: now,
+    updatedAt: now,
+    createdByUid: cleanReservationText(actorUid, 128) || "system",
+    source: "waitlist-availability",
+    templateSnapshot: {
+      key: template.key,
+      title: template.title,
+      body: template.body,
+    },
+    preferencesSnapshot: {
+      bookingStatusEnabled: preferences.bookingStatusEnabled !== false,
     },
   };
 }
@@ -671,12 +740,14 @@ module.exports = {
   LOYALTY_REWARD_TEMPLATE_KEY,
   NOTIFICATION_OUTBOX_COLLECTION,
   REVIEW_PROMPT_RESERVATION_STATUS_VALUES,
+  WAITLIST_AVAILABLE_TEMPLATE_KEY,
   adminNotificationOutboxDocId,
   buildAdminCampaignDraftTestNotificationOutboxDocument,
   buildAdminNotificationTestResponse,
   buildAdminPendingBookingNotificationOutboxDocument,
   buildAdminTestNotificationOutboxDocument,
   buildLoyaltyRewardNotificationOutboxDocument,
+  buildWaitlistAvailabilityNotificationOutboxDocument,
   buildNotificationCampaignBroadcastOutboxDocument,
   buildReservationNotificationOutboxDocument,
   campaignNotificationOutboxDocId,

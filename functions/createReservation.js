@@ -632,12 +632,12 @@ function buildAvailabilityMonth({
     const capacityLimit = resolveCapacityLimit(defaultCapacitySetting, capacityByDate.get(dateKey));
     const reservationsForDate = activeReservations.filter((item) => item.date === dateKey);
     const blockedForDate = (blockedSlots || []).filter((item) => item.date === dateKey);
+    const isPastDate = dateKey < request.todayKey;
 
     const slots = defaultSlots.map((slot) => {
       const reservationCount = countOverlappingReservations(reservationsForDate, slot.start, slot.end);
       const remainingCapacity = Math.max(0, capacityLimit - reservationCount);
       const blocked = hasBlockedSlotOverlap(blockedForDate, slot.start, slot.end);
-      const isPastDate = dateKey < request.todayKey;
       const isPastSlot = dateKey === request.todayKey && slot.start <= request.now;
       const available = capacityLimit > 0 && remainingCapacity > 0 && !blocked && !isPastDate && !isPastSlot;
 
@@ -654,6 +654,7 @@ function buildAvailabilityMonth({
       dateLabel: `${day} ${MONTH_SHORT_NAMES_PT[month]}`,
       summaryLabel: `${day} de ${MONTH_NAMES_PT[month]}, ${year}`,
       available: slots.some((slot) => slot.available),
+      waitlistEligible: !isPastDate && defaultSlots.some((slot) => slot.start > request.now),
       slots,
     });
   }

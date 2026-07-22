@@ -13,6 +13,7 @@ const {
   buildAdminPendingBookingNotificationOutboxDocument,
   buildAdminTestNotificationOutboxDocument,
   buildLoyaltyRewardNotificationOutboxDocument,
+  buildWaitlistAvailabilityNotificationOutboxDocument,
   buildNotificationCampaignBroadcastOutboxDocument,
   buildReservationNotificationOutboxDocument,
   campaignNotificationOutboxDocId,
@@ -23,6 +24,51 @@ const {
   isReviewPromptReservationDue,
   notificationOutboxDocId,
 } = require("../notificationOutbox");
+
+test("buildWaitlistAvailabilityNotificationOutboxDocument queues a one-shot booking alert", () => {
+  const settings = buildNotificationSettings(doc({
+    value: {
+      bookingStatusEnabled: true,
+      templates: [
+        {
+          key: "waitlist_available",
+          enabled: true,
+          title: "Vaga para {{serviceName}}",
+          body: "Novos horários em {{waitlistDate}}: {{availableTimes}}.",
+        },
+      ],
+    },
+  }));
+  const payload = buildWaitlistAvailabilityNotificationOutboxDocument({
+    waitlistId: "wl-1",
+    waitlist: {
+      ownerUid: "user-1",
+      serviceName: "Lavagem Premium",
+      date: "2026-07-25",
+      availableTimes: ["09:30", "10:00"],
+      alertVersion: 2,
+    },
+    settings,
+    preferences: {bookingStatusEnabled: true},
+    timestamp: new Date("2026-07-23T08:00:00.000Z"),
+  });
+
+  assert.equal(payload.type, "waitlist_available");
+  assert.equal(payload.templateKey, "waitlist_available");
+  assert.equal(payload.recipientUid, "user-1");
+  assert.equal(payload.title, "Vaga para Lavagem Premium");
+  assert.equal(payload.body, "Novos horários em 2026-07-25: 09:30, 10:00.");
+  assert.equal(payload.dedupeKey, "waitlist_available:wl-1:2");
+  assert.equal(Object.hasOwn(payload, "token"), false);
+
+  const optedOut = buildWaitlistAvailabilityNotificationOutboxDocument({
+    waitlistId: "wl-1",
+    waitlist: {ownerUid: "user-1", serviceName: "Lavagem Premium", date: "2026-07-25"},
+    settings,
+    preferences: {bookingStatusEnabled: false},
+  });
+  assert.equal(optedOut, null);
+});
 
 test("buildReservationNotificationOutboxDocument queues booking status with templates", () => {
   const settings = buildNotificationSettings(doc({

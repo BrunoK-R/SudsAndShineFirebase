@@ -148,11 +148,23 @@ const {
   buildAdminNotificationTestResponse,
   buildAdminTestNotificationOutboxDocument,
   buildNotificationCampaignBroadcastOutboxDocument,
+  buildWaitlistAvailabilityNotificationOutboxDocument,
   campaignNotificationOutboxDocId,
   isBookingReminderReservationDue,
   isReviewPromptReservationDue,
   notificationOutboxDocId,
 } = require("./notificationOutbox");
+const {
+  WAITLIST_ACTIVE_STATUS,
+  WAITLIST_COLLECTION,
+  availableTimesForWaitlist,
+  buildUserWaitlist,
+  hasWaitlistDateAvailability,
+  normalizeWaitlistDocument,
+  validateCancelWaitlistInput,
+  validateJoinWaitlistInput,
+  waitlistEntryId,
+} = require("./waitlist");
 const {
   MAX_DELIVERY_ATTEMPTS,
   MAX_DELIVERY_TOKENS_PER_USER,
@@ -800,6 +812,91 @@ exports.getAvailability = onCall(async (request) => {
     defaultCapacitySetting: defaultCapacitySnap.empty ? null : defaultCapacitySnap.docs[0].data(),
     openingHours: openingHoursForAvailability(businessInfo, businessInfoSnap, keyedBusinessInfoSnap),
   });
+});
+
+exports.joinMyWaitlist = onCall(async (request) => {
+  const uid = assertAuthenticatedUid(request);
+  const data = validateJoinWaitlistInput(request.data);
+  const waitlistId = waitlistEntryId(uid, data);
+  const waitlistRef = db.collection(WAITLIST_COLLECTION).doc(waitlistId);
+  const ownerEmail = authenticatedEmail(request);
+
+  const alertVersion = await db.runTransaction(async (tx) => {
+    const existingSnap = await tx.get(waitlistRef);
+    const existing = existingSnap.exists ? existingSnap.data() || {} : {};
+    const alreadyActive = existing.status === WAITLIST_ACTIVE_STATUS;
+    const nextAlertVersion = alreadyActive ?
+      Math.max(1, Math.floor(Number(existing.alertVersion) || 1)) :
+      Math.max(1, Math.floor(Number(existing.alertVersion) || 0) + 1);
+    const value = {
+      ownerUid: uid,
+      ownerEmail,
+      date: data.date,
+      serviceId: data.serviceId,
+      serviceName: data.serviceName,
+      serviceDurationMinutes: data.serviceDurationMinutes,
+      status: WAITLIST_ACTIVE_STATUS,
+      alertVersion: nextAlertVersion,
+      notifiedAt: null,
+      cancelledAt: null,
+      availableTimes: [],
+      updatedAt: admin.firestore.FieldValue.serverTimestamp(),
+      source: "customer-mobile-waitlist",
+    };
+    if (!existingSnap.exists) {
+      value.createdAt = admin.firestore.FieldValue.serverTimestamp();
+    }
+    tx.set(waitlistRef, value, {merge: true});
+    return nextAlertVersion;
+  });
+
+  return {
+    ok: true,
+    waitlistId,
+    date: data.date,
+    serviceId: data.serviceId,
+    serviceName: data.serviceName,
+    serviceDurationMinutes: data.serviceDurationMinutes,
+    status: WAITLIST_ACTIVE_STATUS,
+    alertVersion,
+  };
+});
+
+exports.getMyWaitlist = onCall(async (request) => {
+  const uid = assertAuthenticatedUid(request);
+  const waitlistSnap = await db.collection(WAITLIST_COLLECTION)
+    .where("ownerUid", "==", uid)
+    .limit(100)
+    .get();
+  return buildUserWaitlist(waitlistSnap.docs, uid);
+});
+
+exports.cancelMyWaitlist = onCall(async (request) => {
+  const uid = assertAuthenticatedUid(request);
+  const {waitlistId} = validateCancelWaitlistInput(request.data);
+  const waitlistRef = db.collection(WAITLIST_COLLECTION).doc(waitlistId);
+
+  const status = await db.runTransaction(async (tx) => {
+    const waitlistSnap = await tx.get(waitlistRef);
+    if (!waitlistSnap.exists) {
+      throw new HttpsError("not-found", "Waitlist alert not found");
+    }
+    const waitlist = waitlistSnap.data() || {};
+    if (String(waitlist.ownerUid || "").trim() !== uid) {
+      throw new HttpsError("permission-denied", "Waitlist alert belongs to another user");
+    }
+    if (waitlist.status !== WAITLIST_ACTIVE_STATUS) {
+      return String(waitlist.status || "cancelled").trim() || "cancelled";
+    }
+    tx.update(waitlistRef, {
+      status: "cancelled",
+      cancelledAt: admin.firestore.FieldValue.serverTimestamp(),
+      updatedAt: admin.firestore.FieldValue.serverTimestamp(),
+    });
+    return "cancelled";
+  });
+
+  return {ok: true, waitlistId, status};
 });
 
 exports.getServiceCatalog = onCall(async () => {
@@ -2840,6 +2937,132 @@ exports.queueBookingReminderNotifications = onSchedule("every 15 minutes", async
     scannedCount: confirmedSnap.size,
     queuedCount,
   };
+});
+
+exports.queueWaitlistAvailabilityNotifications = onSchedule("every 15 minutes", async () => {
+  const now = new Date();
+  const todayKey = now.toISOString().slice(0, 10);
+  const waitlistSnap = await db.collection(WAITLIST_COLLECTION)
+    .where("status", "==", WAITLIST_ACTIVE_STATUS)
+    .limit(500)
+    .get();
+  const activeWaitlist = waitlistSnap.docs
+    .map(normalizeWaitlistDocument)
+    .filter((entry) => entry && entry.date >= todayKey);
+  if (activeWaitlist.length === 0) {
+    logger.info("Checked waitlist availability", {scannedCount: waitlistSnap.size, queuedCount: 0});
+    return {scannedCount: waitlistSnap.size, queuedCount: 0};
+  }
+
+  const minimumDate = activeWaitlist.reduce((value, entry) => value < entry.date ? value : entry.date, activeWaitlist[0].date);
+  const maximumDate = activeWaitlist.reduce((value, entry) => value > entry.date ? value : entry.date, activeWaitlist[0].date);
+  const [
+    reservationsSnap,
+    blockedSnap,
+    capacityOverrideSnap,
+    defaultCapacitySnap,
+    defaultSlotIntervalSnap,
+    businessInfoSnap,
+    keyedBusinessInfoSnap,
+  ] = await Promise.all([
+    db.collection("reservations").where("date", ">=", minimumDate).where("date", "<=", maximumDate).get(),
+    db.collection("blocked_slots").where("date", ">=", minimumDate).where("date", "<=", maximumDate).get(),
+    db.collection("capacity_overrides").where("date", ">=", minimumDate).where("date", "<=", maximumDate).get(),
+    db.collection("business_settings").where("key", "==", "default_max_bookings_per_slot").limit(1).get(),
+    db.collection("business_settings").where("key", "==", "default_slot_interval_minutes").limit(1).get(),
+    db.collection("business_settings").doc("business_info").get(),
+    db.collection("business_settings").where("key", "==", "business_info").limit(1).get(),
+  ]);
+  const businessInfo = businessInfoFromSnapshots(businessInfoSnap, keyedBusinessInfoSnap);
+  const openingHours = openingHoursForAvailability(businessInfo, businessInfoSnap, keyedBusinessInfoSnap);
+  const availabilityInputs = {
+    reservations: reservationsSnap.docs.map((docSnap) => docSnap.data()),
+    blockedSlots: blockedSnap.docs.map((docSnap) => docSnap.data()),
+    capacityOverrides: capacityOverrideSnap.docs.map((docSnap) => docSnap.data()),
+    defaultCapacitySetting: defaultCapacitySnap.empty ? null : defaultCapacitySnap.docs[0].data(),
+    openingHours,
+  };
+  const availableEntries = activeWaitlist.map((entry) => {
+    const baseRequest = resolveAvailabilityRequest({
+      anchorDate: entry.date,
+      serviceDurationMinutes: entry.serviceDurationMinutes,
+    }, now);
+    const effectiveRequest = availabilityRequestWithDefaultSlotInterval(
+      baseRequest,
+      {},
+      defaultSlotIntervalSnap.empty ? null : defaultSlotIntervalSnap.docs[0].data(),
+    );
+    const availabilityMonth = buildAvailabilityMonth({request: effectiveRequest, ...availabilityInputs});
+    if (!hasWaitlistDateAvailability(entry, availabilityMonth)) return null;
+    return {
+      ...entry,
+      availableTimes: availableTimesForWaitlist(entry, availabilityMonth),
+    };
+  }).filter(Boolean);
+
+  let queuedCount = 0;
+  for (let index = 0; index < availableEntries.length; index += 20) {
+    const batch = availableEntries.slice(index, index + 20);
+    const queuedResults = await Promise.all(batch.map((entry) => db.runTransaction(async (tx) => {
+      const waitlistRef = db.collection(WAITLIST_COLLECTION).doc(entry.id);
+      const outboxRef = db.collection(NOTIFICATION_OUTBOX_COLLECTION).doc(
+        notificationOutboxDocId("waitlist_available", `${entry.id}_v${entry.alertVersion}`),
+      );
+      const [
+        freshWaitlistSnap,
+        existingOutboxSnap,
+        notificationSettingsSnap,
+        notificationPreferencesSnap,
+        notificationUserSnap,
+      ] = await Promise.all([
+        tx.get(waitlistRef),
+        tx.get(outboxRef),
+        tx.get(notificationSettingsRef()),
+        tx.get(userNotificationPreferencesRef(entry.ownerUid)),
+        tx.get(userDocument(entry.ownerUid)),
+      ]);
+      const freshWaitlist = normalizeWaitlistDocument(freshWaitlistSnap);
+      if (
+        !freshWaitlist ||
+        freshWaitlist.status !== WAITLIST_ACTIVE_STATUS ||
+        freshWaitlist.alertVersion !== entry.alertVersion ||
+        existingOutboxSnap.exists
+      ) {
+        return false;
+      }
+      const settings = buildNotificationSettings(notificationSettingsSnap);
+      const preferences = buildUserNotificationPreferences({
+        preferencesDoc: notificationPreferencesSnap,
+        userDoc: notificationUserSnap,
+      });
+      const notification = buildWaitlistAvailabilityNotificationOutboxDocument({
+        waitlistId: entry.id,
+        waitlist: entry,
+        settings,
+        preferences,
+        actorUid: "system",
+        timestamp: admin.firestore.FieldValue.serverTimestamp(),
+      });
+      if (!notification) return false;
+
+      tx.set(outboxRef, notification);
+      tx.update(waitlistRef, {
+        status: "notified",
+        notifiedAt: admin.firestore.FieldValue.serverTimestamp(),
+        updatedAt: admin.firestore.FieldValue.serverTimestamp(),
+        availableTimes: entry.availableTimes,
+      });
+      return true;
+    })));
+    queuedCount += queuedResults.filter(Boolean).length;
+  }
+
+  logger.info("Checked waitlist availability", {
+    scannedCount: waitlistSnap.size,
+    availableCount: availableEntries.length,
+    queuedCount,
+  });
+  return {scannedCount: waitlistSnap.size, availableCount: availableEntries.length, queuedCount};
 });
 
 async function claimNotificationOutboxDelivery(docSnap, now = new Date(), notificationSettings = {}) {
