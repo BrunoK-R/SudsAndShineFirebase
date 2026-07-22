@@ -407,10 +407,50 @@ function campaignSortKey(campaign) {
   return campaign.status === "draft" ? 0 : 1;
 }
 
-function buildAdminNotificationCampaignDrafts(docSnaps = []) {
+function campaignDeliverySummaries(outboxDocs = []) {
+  const summaries = new Map();
+  for (const docSnap of outboxDocs || []) {
+    const data = typeof docSnap?.data === "function" ? docSnap.data() || {} : docSnap?.data || docSnap || {};
+    const campaignId = cleanOptionalText(data.campaignId, 80);
+    if (!campaignId) continue;
+    const deliveryState = cleanOptionalText(data.deliveryState, 40).toLowerCase() || "queued";
+    const summary = summaries.get(campaignId) || {
+      totalCount: 0,
+      sentCount: 0,
+      failedCount: 0,
+      suppressedCount: 0,
+      pendingCount: 0,
+    };
+    summary.totalCount += 1;
+    if (deliveryState === "sent") {
+      summary.sentCount += 1;
+    } else if (deliveryState === "failed") {
+      summary.failedCount += 1;
+    } else if (deliveryState === "suppressed") {
+      summary.suppressedCount += 1;
+    } else {
+      summary.pendingCount += 1;
+    }
+    summaries.set(campaignId, summary);
+  }
+  return summaries;
+}
+
+function buildAdminNotificationCampaignDrafts(docSnaps = [], outboxDocs = []) {
+  const deliverySummaries = campaignDeliverySummaries(outboxDocs);
   const campaigns = (docSnaps || [])
     .map(normalizeNotificationCampaignDraft)
     .filter(Boolean)
+    .map((campaign) => ({
+      ...campaign,
+      deliverySummary: deliverySummaries.get(campaign.campaignId) || {
+        totalCount: campaign.queuedCount,
+        sentCount: 0,
+        failedCount: 0,
+        suppressedCount: 0,
+        pendingCount: campaign.queuedCount,
+      },
+    }))
     .sort((left, right) => {
       const statusDiff = campaignSortKey(left) - campaignSortKey(right);
       if (statusDiff !== 0) return statusDiff;
@@ -430,6 +470,7 @@ module.exports = {
   NOTIFICATION_CAMPAIGN_SENT_STATE,
   assertNotificationCampaignBroadcastReady,
   buildAdminNotificationCampaignDrafts,
+  campaignDeliverySummaries,
   buildNotificationCampaignBroadcastReceipt,
   buildNotificationCampaignBroadcastUpdateValue,
   buildNotificationCampaignDraftArchiveValue,

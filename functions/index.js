@@ -166,6 +166,10 @@ const {
   waitlistEntryId,
 } = require("./waitlist");
 const {
+  DEFAULT_RESERVATION_LIMIT: ADMIN_LOYALTY_RESERVATION_LIMIT,
+  buildAdminLoyaltyReport,
+} = require("./loyaltyReport");
+const {
   MAX_DELIVERY_ATTEMPTS,
   MAX_DELIVERY_TOKENS_PER_USER,
   buildNotificationPushMessage,
@@ -1866,6 +1870,27 @@ exports.getAdminLoyaltySettings = onCall(async (request) => {
   return buildLoyaltySettings(selectedLoyaltySettingsSnapshot(settingsSnap, legacySettingsSnap));
 });
 
+exports.getAdminLoyaltyReport = onCall(async (request) => {
+  await assertAdminRequest(request);
+
+  const [reservationSnap, settingsSnap, legacySettingsSnap] = await Promise.all([
+    db.collection("reservations")
+      .orderBy("slotStart", "desc")
+      .limit(ADMIN_LOYALTY_RESERVATION_LIMIT)
+      .get(),
+    loyaltySettingsRef().get(),
+    legacyLoyaltySettingsRef().get(),
+  ]);
+  const loyaltySettings = buildLoyaltySettings(
+    selectedLoyaltySettingsSnapshot(settingsSnap, legacySettingsSnap),
+  );
+  return buildAdminLoyaltyReport({
+    reservationDocs: reservationSnap.docs,
+    loyaltySettings,
+    reservationLimit: ADMIN_LOYALTY_RESERVATION_LIMIT,
+  });
+});
+
 exports.getAdminNotificationSettings = onCall(async (request) => {
   await assertAdminRequest(request);
 
@@ -1876,8 +1901,14 @@ exports.getAdminNotificationSettings = onCall(async (request) => {
 exports.getAdminNotificationCampaignDrafts = onCall(async (request) => {
   await assertAdminRequest(request);
 
-  const campaignsSnap = await notificationCampaignDraftsCollection().limit(100).get();
-  return buildAdminNotificationCampaignDrafts(campaignsSnap.docs);
+  const [campaignsSnap, campaignDeliveriesSnap] = await Promise.all([
+    notificationCampaignDraftsCollection().limit(100).get(),
+    db.collection(NOTIFICATION_OUTBOX_COLLECTION)
+      .where("type", "==", "campaign_broadcast")
+      .limit(2000)
+      .get(),
+  ]);
+  return buildAdminNotificationCampaignDrafts(campaignsSnap.docs, campaignDeliveriesSnap.docs);
 });
 
 exports.updateBusinessInfo = onCall(async (request) => {

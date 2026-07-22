@@ -333,6 +333,12 @@ test("buildAdminNotificationCampaignDrafts normalizes admin campaign list", () =
       body: "Mensagem",
       targetAudience: "test_users",
     }),
+  ], [
+    doc("delivery-1", {campaignId: "archived", deliveryState: "sent"}),
+    doc("delivery-2", {campaignId: "archived", deliveryState: "failed"}),
+    doc("delivery-3", {campaignId: "archived", deliveryState: "suppressed"}),
+    doc("delivery-4", {campaignId: "archived", deliveryState: "queued"}),
+    doc("delivery-5", {campaignId: "another-campaign", deliveryState: "sent"}),
   ]);
 
   assert.equal(result.source, "firestore");
@@ -353,6 +359,13 @@ test("buildAdminNotificationCampaignDrafts normalizes admin campaign list", () =
   assert.equal(result.campaigns[1].updatedAtIso, "2026-06-01T12:15:00.000Z");
   assert.equal(result.campaigns[1].archivedAtIso, "2026-06-03T09:00:00.500Z");
   assert.equal(result.campaigns[1].archivedByUid, "admin-archived");
+  assert.deepEqual(result.campaigns[1].deliverySummary, {
+    totalCount: 4,
+    sentCount: 1,
+    failedCount: 1,
+    suppressedCount: 1,
+    pendingCount: 1,
+  });
 });
 
 test("normalizeNotificationCampaignDraft falls back to a safe test audience", () => {
