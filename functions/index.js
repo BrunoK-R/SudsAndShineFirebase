@@ -127,6 +127,17 @@ const {
   referralCodeCandidates,
 } = require("./referrals");
 const {
+  ENTITLEMENT_LIMIT,
+  assertEntitlementUsageAdjustment,
+  buildServiceEntitlementList,
+  normalizeServiceEntitlement,
+  toServiceEntitlementResponse,
+  validateAdminEntitlementIssueInput,
+  validateAdminEntitlementLookupInput,
+  validateAdminEntitlementRevokeInput,
+  validateAdminEntitlementUsageInput,
+} = require("./serviceEntitlements");
+const {
   buildLoyaltySettings,
   buildLoyaltyRedemptionMetadata,
   buildLoyaltySettingsValue,
@@ -261,6 +272,10 @@ function userLoyaltyRedemptionsCollection(uid) {
 
 function userLoyaltyAdjustmentsCollection(uid) {
   return db.collection("users").doc(uid).collection("loyalty_adjustments");
+}
+
+function userServiceEntitlementsCollection(uid) {
+  return db.collection("users").doc(uid).collection("service_entitlements");
 }
 
 function referralProfileRef(uid) {
@@ -1214,6 +1229,231 @@ exports.claimMyReferralCode = onCall(async (request) => {
     ok: true,
     referral: await loadMyReferralProgram(uid),
   };
+});
+
+exports.getMyServiceEntitlements = onCall(async (request) => {
+  const uid = assertAuthenticatedUid(request);
+  const entitlementSnap = await userServiceEntitlementsCollection(uid)
+    .limit(ENTITLEMENT_LIMIT)
+    .get();
+  return {
+    entitlements: buildServiceEntitlementList(entitlementSnap.docs),
+    purchaseMode: "staff_issued",
+    onlinePurchaseAvailable: false,
+  };
+});
+
+exports.getAdminServiceEntitlements = onCall(async (request) => {
+  await assertAdminRequest(request);
+  const data = validateAdminEntitlementLookupInput(request.data);
+  let customer;
+  try {
+    customer = await auth.getUserByEmail(data.customerEmail);
+  } catch (error) {
+    if (error?.code === "auth/user-not-found") {
+      throw new HttpsError("not-found", "Customer account was not found");
+    }
+    throw error;
+  }
+  const entitlementSnap = await userServiceEntitlementsCollection(customer.uid)
+    .limit(ENTITLEMENT_LIMIT)
+    .get();
+  return {
+    customer: {
+      uid: customer.uid,
+      email: customer.email || data.customerEmail,
+      displayName: customer.displayName || "",
+    },
+    entitlements: buildServiceEntitlementList(entitlementSnap.docs),
+    purchaseMode: "staff_issued",
+    onlinePurchaseAvailable: false,
+  };
+});
+
+exports.issueAdminServiceEntitlement = onCall(async (request) => {
+  await assertAdminRequest(request);
+  const data = validateAdminEntitlementIssueInput(request.data);
+  let customer;
+  try {
+    customer = await auth.getUserByEmail(data.customerEmail);
+  } catch (error) {
+    if (error?.code === "auth/user-not-found") {
+      throw new HttpsError("not-found", "Customer account was not found");
+    }
+    throw error;
+  }
+  const serviceSnap = await db.collection("services").get();
+  const activeServices = buildServiceCatalog(serviceSnap.docs, []).services;
+  const selectedServices = data.eligibleServiceIds.map((serviceId) =>
+    activeServices.find((service) => service.id === serviceId),
+  );
+  if (selectedServices.some((service) => !service)) {
+    throw new HttpsError("failed-precondition", "One or more included services are not active");
+  }
+
+  const entitlementRef = userServiceEntitlementsCollection(customer.uid).doc(`issue-${data.operationId}`);
+  const eventRef = entitlementRef.collection("events").doc("issued");
+  await db.runTransaction(async (tx) => {
+    const existingSnap = await tx.get(entitlementRef);
+    if (existingSnap.exists) return;
+    const now = new Date();
+    const validUntil = new Date(now.getTime() + data.validDays * 24 * 60 * 60 * 1000);
+    const timestamp = FieldValue.serverTimestamp();
+    const codeSuffix = entitlementRef.id.replace(/[^a-zA-Z0-9]/g, "").slice(-10).toUpperCase();
+    tx.set(entitlementRef, {
+      code: `SS-PLAN-${codeSuffix}`,
+      ownerUid: customer.uid,
+      ownerEmail: customer.email || data.customerEmail,
+      kind: data.kind,
+      name: data.name,
+      status: "active",
+      totalUses: data.totalUses,
+      usedUses: 0,
+      eligibleServiceIds: data.eligibleServiceIds,
+      eligibleServiceNames: selectedServices.map((service) => service.name),
+      validFrom: Timestamp.fromDate(now),
+      validUntil: Timestamp.fromDate(validUntil),
+      amountPaidCents: data.amountPaidCents,
+      purchaseMode: "staff_issued",
+      onlinePurchaseAvailable: false,
+      issuedByUid: request.auth.uid,
+      issueNote: data.staffNote,
+      createdAt: timestamp,
+      updatedAt: timestamp,
+      updateSource: "admin-mobile-entitlements",
+    });
+    tx.set(eventRef, {
+      type: "issued",
+      deltaUses: 0,
+      usedUsesAfter: 0,
+      remainingUsesAfter: data.totalUses,
+      staffNote: data.staffNote,
+      actorUid: request.auth.uid,
+      occurredAt: timestamp,
+    });
+  });
+  const entitlementSnap = await entitlementRef.get();
+  return {
+    ok: true,
+    customer: {
+      uid: customer.uid,
+      email: customer.email || data.customerEmail,
+      displayName: customer.displayName || "",
+    },
+    entitlement: toServiceEntitlementResponse(normalizeServiceEntitlement(entitlementSnap)),
+  };
+});
+
+exports.adjustAdminServiceEntitlementUsage = onCall(async (request) => {
+  await assertAdminRequest(request);
+  const data = validateAdminEntitlementUsageInput(request.data);
+  let customer;
+  try {
+    customer = await auth.getUserByEmail(data.customerEmail);
+  } catch (error) {
+    if (error?.code === "auth/user-not-found") {
+      throw new HttpsError("not-found", "Customer account was not found");
+    }
+    throw error;
+  }
+  const entitlementRef = userServiceEntitlementsCollection(customer.uid).doc(data.entitlementId);
+  const eventRef = entitlementRef.collection("events").doc(`usage-${data.operationId}`);
+  await db.runTransaction(async (tx) => {
+    const [entitlementSnap, existingEventSnap] = await Promise.all([
+      tx.get(entitlementRef),
+      tx.get(eventRef),
+    ]);
+    if (existingEventSnap.exists) return;
+    const entitlement = normalizeServiceEntitlement(entitlementSnap);
+    if (entitlement && entitlement.ownerUid !== customer.uid) {
+      throw new HttpsError("permission-denied", "Service plan belongs to another customer");
+    }
+    const usedUses = assertEntitlementUsageAdjustment(entitlement, data.deltaUses);
+    const timestamp = FieldValue.serverTimestamp();
+    const nextStoredStatus = entitlement.status === "revoked" ?
+      "revoked" :
+      usedUses >= entitlement.totalUses ? "exhausted" : "active";
+    const update = {
+      usedUses,
+      status: nextStoredStatus,
+      updatedAt: timestamp,
+      updatedByUid: request.auth.uid,
+      updateSource: "admin-mobile-entitlements",
+    };
+    if (data.deltaUses === 1) {
+      update.lastUsedAt = timestamp;
+      update.lastUsedByUid = request.auth.uid;
+      update.lastReservationCode = data.reservationCode || FieldValue.delete();
+    } else {
+      update.lastCorrectedAt = timestamp;
+      update.lastCorrectedByUid = request.auth.uid;
+    }
+    tx.update(entitlementRef, update);
+    tx.set(eventRef, {
+      type: data.deltaUses === 1 ? "usage_recorded" : "usage_corrected",
+      deltaUses: data.deltaUses,
+      usedUsesAfter: usedUses,
+      remainingUsesAfter: Math.max(0, entitlement.totalUses - usedUses),
+      reservationCode: data.reservationCode,
+      staffNote: data.staffNote,
+      actorUid: request.auth.uid,
+      occurredAt: timestamp,
+    });
+  });
+  const entitlementSnap = await entitlementRef.get();
+  return {ok: true, entitlement: toServiceEntitlementResponse(normalizeServiceEntitlement(entitlementSnap))};
+});
+
+exports.revokeAdminServiceEntitlement = onCall(async (request) => {
+  await assertAdminRequest(request);
+  const data = validateAdminEntitlementRevokeInput(request.data);
+  let customer;
+  try {
+    customer = await auth.getUserByEmail(data.customerEmail);
+  } catch (error) {
+    if (error?.code === "auth/user-not-found") {
+      throw new HttpsError("not-found", "Customer account was not found");
+    }
+    throw error;
+  }
+  const entitlementRef = userServiceEntitlementsCollection(customer.uid).doc(data.entitlementId);
+  const eventRef = entitlementRef.collection("events").doc(`revoke-${data.operationId}`);
+  await db.runTransaction(async (tx) => {
+    const [entitlementSnap, existingEventSnap] = await Promise.all([
+      tx.get(entitlementRef),
+      tx.get(eventRef),
+    ]);
+    if (existingEventSnap.exists) return;
+    const entitlement = normalizeServiceEntitlement(entitlementSnap);
+    if (!entitlement) throw new HttpsError("not-found", "Service plan was not found");
+    if (entitlement.ownerUid !== customer.uid) {
+      throw new HttpsError("permission-denied", "Service plan belongs to another customer");
+    }
+    if (entitlement.status === "revoked") {
+      throw new HttpsError("failed-precondition", "Service plan is already revoked");
+    }
+    const timestamp = FieldValue.serverTimestamp();
+    tx.update(entitlementRef, {
+      status: "revoked",
+      revokedAt: timestamp,
+      revokedByUid: request.auth.uid,
+      revocationReason: data.reason,
+      updatedAt: timestamp,
+      updatedByUid: request.auth.uid,
+      updateSource: "admin-mobile-entitlements",
+    });
+    tx.set(eventRef, {
+      type: "revoked",
+      deltaUses: 0,
+      usedUsesAfter: entitlement.usedUses,
+      remainingUsesAfter: entitlement.remainingUses,
+      staffNote: data.reason,
+      actorUid: request.auth.uid,
+      occurredAt: timestamp,
+    });
+  });
+  const entitlementSnap = await entitlementRef.get();
+  return {ok: true, entitlement: toServiceEntitlementResponse(normalizeServiceEntitlement(entitlementSnap))};
 });
 
 exports.redeemMyLoyaltyReward = onCall(async (request) => {
